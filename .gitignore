@@ -1,0 +1,9 @@
+*.ipynb_checkpoints/
+__pycache__/*
+*/__pycache__/*
+trained_models/*
+*.gif
+*.h5
+*.out
+*.swp
+/results
