@@ -39,19 +39,32 @@ def get_ins(frames, actions, states, gaussian=True, units=0, layers=0):
 
 
 def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate, gaussian=False, kl_weight=None, L=None,
-           lstm_units=None, lstm_layers=None, training=True, reconstruct_random_frames=False):
+           use_seq_len=12, lstm_units=None, lstm_layers=None, training=True, reconstruct_random_frame=False,
+           random_window=True):
 
     bs, seq_len, w, h, c = [int(s) for s in frames.shape]
+    assert seq_len > use_seq_len
+
+    if random_window:
+        rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len-use_seq_len+1, dtype='int32')
+        frames = tf.slice(frames, (0, rand_index, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        actions = tf.slice(actions, (0, rand_index, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        states = tf.slice(states, (0, rand_index, 0), (-1, use_seq_len, -1)) if states is not None else None
+    else:  # window starts at the start of each sample
+        frames = tf.slice(frames, (0, 0, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        actions = tf.slice(actions, (0, 0, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        states = tf.slice(states, (0, 0, 0), (-1, use_seq_len, -1)) if states is not None else None
 
     frame_inputs, action_state, initial_state, ins = get_ins(frames, actions, states, gaussian=gaussian,
                                                              units=lstm_units, layers=lstm_layers)
 
-    # random context frames
-    rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len - context_frames + 1, dtype='int32')
-    xc_0 = tf.slice(frame_inputs, (0, rand_index, 0, 0, 0), (-1, context_frames, -1, -1, -1))
-    xc_1 = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, context_frames, -1, -1, -1))
+    # == context frames used for reconstruction always selected at the beginning
+    rand_index_1 = tf.random.uniform(shape=(), minval=0, maxval=use_seq_len-context_frames+1, dtype='int32')
+    xc_0 = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, context_frames, -1, -1, -1))
+    xc_1 = tf.slice(frame_inputs, (0, rand_index_1, 0, 0, 0), (-1, context_frames, -1, -1, -1))
+
     x_to_recover = frame_inputs
-    n_frames = seq_len
+    n_frames = use_seq_len
 
     # ===== Build the model
     hc_0, skips_0 = Ec(xc_0)
@@ -61,27 +74,25 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate, gau
     hc_1 = tf.slice(hc_1, (0, context_frames - 1, 0), (-1, 1, -1))
     skips = slice_skips(skips_0, start=context_frames - 1, length=1)
 
-    if reconstruct_random_frames:
+    if reconstruct_random_frame:
         a_s_dim = action_state.shape[-1]
-        rand_index_1 = tf.random.uniform(shape=(), minval=0, maxval=seq_len-context_frames+1, dtype='int32')
+        rand_index_1 = tf.random.uniform(shape=(), minval=0, maxval=use_seq_len, dtype='int32')
         action_state = tf.slice(action_state, (0, 0, 0), (bs, rand_index_1+1, a_s_dim))
         x_to_recover = tf.slice(frames, (0, rand_index_1+1, 0, 0, 0), (bs, 1, w, h, c))
         n_frames = rand_index_1 + 1
     else:
-        skips = repeat_skips(skips, seq_len)
+        skips = repeat_skips(skips, use_seq_len)
 
     ha = A(action_state)
     hc_repeat = RepeatVector(n_frames)(tf.squeeze(hc_0, axis=1))
+    hc_ha = K.concatenate([hc_repeat, ha], axis=-1)
 
     if gaussian:
-        hc_ha = K.concatenate([hc_repeat, ha], axis=-1)
         z, mu, logvar, state = L([hc_ha, initial_state])
         z = mu if training is False else z
         hc_ha = K.concatenate([hc_repeat, ha, z], axis=-1)
-    else:
-        hc_ha = K.concatenate([hc_repeat, ha], axis=-1)
 
-    if reconstruct_random_frames:
+    if reconstruct_random_frame:
         _, hc_ha = tf.split(hc_ha, [-1, 1], axis=1)
         if gaussian:
             _, mu = tf.split(mu, [-1, 1], axis=1)
@@ -92,7 +103,7 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate, gau
     rec_loss = mean_squared_error(x_to_recover, x_recovered)
     sim_loss = mean_squared_error(hc_0, hc_1)
 
-    model = Model(inputs=ins, outputs=x_recovered)
+    model = Model(inputs=ins, outputs=[x_recovered, x_to_recover])
     model.add_metric(rec_loss, name='rec_loss', aggregation='mean')
     model.add_metric(sim_loss, name='sim_loss', aggregation='mean')
 
@@ -108,6 +119,109 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate, gau
     return model
 
 
+def adr(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, gaussian_a=False, use_seq_len=12,
+        lstm_units=256, lstm_layers=1, learning_rate=0.0, random_window=True, reconstruct_random_frame=True):
+
+    print('========= frames', frames)
+    print('========= actions', actions)
+    print('========= states', states)
+
+    bs, seq_len, w, h, c = [int(s) for s in frames.shape]
+    assert seq_len > use_seq_len
+
+    if random_window:
+        rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len-use_seq_len+1, dtype='int32')
+        frames = tf.slice(frames, (0, rand_index, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        actions = tf.slice(actions, (0, rand_index, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        states = tf.slice(states, (0, rand_index, 0), (-1, use_seq_len, -1)) if states is not None else None
+    else:  # window starts at the start of each sample
+        frames = tf.slice(frames, (0, 0, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        actions = tf.slice(actions, (0, 0, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        states = tf.slice(states, (0, 0, 0), (-1, use_seq_len, -1)) if states is not None else None
+
+    frame_inputs, action_state, initial_state, ins = get_ins(frames, actions, states, gaussian=gaussian_a,
+                                                             units=lstm_units, layers=lstm_layers)
+
+    # random context frames
+    rand_index_0 = tf.Variable(tf.random_uniform((), minval=0, maxval=use_seq_len-context_frames,
+                                                 dtype='int32')).initialized_value()
+    xc_0 = tf.slice(frame_inputs, (0, rand_index_0, 0, 0, 0), (-1, context_frames, -1, -1, -1))
+    x_to_recover = frame_inputs
+    n_frames = use_seq_len
+
+    # ===== Build the model
+    hc_0, skips_0 = Ec(xc_0)
+    hc_0 = tf.slice(hc_0, (0, context_frames - 1, 0), (-1, 1, -1))
+    skips = slice_skips(skips_0, start=context_frames - 1, length=1)
+
+    if reconstruct_random_frame:
+        a_s_dim = action_state.shape[-1]
+        rand_index_1 = tf.random.uniform((), minval=0, maxval=use_seq_len, dtype='int32')
+        action_state = tf.slice(action_state, (0, 0, 0), (bs, rand_index_1+1, a_s_dim))
+        x_to_recover = tf.slice(frames, (0, rand_index_1, 0, 0, 0), (bs, 1, w, h, c))
+        n_frames = rand_index_1 + 1
+    else:
+        skips = repeat_skips(skips, use_seq_len)
+
+    ha = A(action_state)
+    hc_repeat = RepeatVector(n_frames)(tf.squeeze(hc_0, axis=1))
+    hc_ha = K.concatenate([hc_repeat, ha], axis=-1)
+
+    if gaussian_a:
+        _, za, _, _ = La([hc_ha, initial_state])
+        hc_ha = K.concatenate([hc_repeat, ha, za], axis=-1)
+
+    if reconstruct_random_frame:
+        _, hc_ha = tf.split(hc_ha, [-1, 1], axis=1)
+        _, ha = tf.split(ha, [-1, 1], axis=1)
+        hc_repeat = hc_0
+
+    x_rec_a = Da([hc_ha, skips])
+
+    x_rec_a_pos = K.relu(x_to_recover - x_rec_a)
+    x_rec_a_neg = K.relu(x_rec_a - x_to_recover)
+    xo_rec_a = K.concatenate([x_rec_a_pos, x_rec_a_neg], axis=-1)
+
+    ho, _ = Eo(xo_rec_a)
+
+    # _, ha = tf.split(ha, [-1, 1], axis=1)                                        # single reconstruction
+    # h = K.concatenate([hc_0, ha, ho], axis=-1)                                   # single reconstruction
+    print('================== hc_repeat', hc_repeat)
+    print('================== ha', ha)
+    print('================== ho', ho)
+    h = K.concatenate([hc_repeat, ha, ho], axis=-1)  # multiple reconstruction
+
+    x_err = Do([h, skips])
+
+    x_err_pos = x_err[:, :, :, :, :3]
+    x_err_neg = x_err[:, :, :, :, 3:]
+    x_recovered = x_err_pos - x_err_neg
+    x_target = x_to_recover - x_rec_a
+    x_target_pos = x_rec_a_pos
+    x_target_neg = x_rec_a_neg
+
+    # == Autoencoder
+    model = Model(inputs=ins, outputs=x_recovered)
+
+    rec_loss = mean_squared_error(x_target, x_recovered)
+    model.add_metric(K.mean(rec_loss), name='rec_loss', aggregation='mean')
+
+    rec_loss_pos = mean_squared_error(x_target_pos, x_err_pos)
+    model.add_metric(rec_loss_pos, name='rec_loss_pos', aggregation='mean')
+
+    rec_loss_neg = mean_squared_error(x_target_neg, x_err_neg)
+    model.add_metric(rec_loss_neg, name='rec_loss_neg', aggregation='mean')
+
+    rec_action_only_loss = mean_squared_error(x_rec_a, x_to_recover)
+    model.add_metric(rec_action_only_loss, name='rec_A', aggregation='mean')
+
+    model.add_loss(K.mean(rec_loss) + (K.mean(rec_loss_pos) + K.mean(rec_loss_neg)))
+
+    model.compile(optimizer=Adam(lr=learning_rate))
+
+    return model
+
+
 def build_O_model(self, frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, Lo=None, AD=None,
                   gaussian_a=False, gaussian_o=True, lstm_units=256, lstm_o_units=256, lstm_layers=1,
                   ae_learning_rate=0.0, disc_learning_rate=0.0, disc_weight=0.0, kl_weight=0.0, L=None):
@@ -116,12 +230,6 @@ def build_O_model(self, frames, actions, states, context_frames, Ec, Eo, A, Do, 
     half = batch_size // 2
     a_dim = actions.shape[-1]
     s_dim = states.shape[-1]
-
-    frame_inputs = Input(tensor=frames, name='frame_inputs')
-    if actions is not None:
-        action_inputs = Input(tensor=actions, name='action_inputs')
-    if states is not None:
-        state_inputs = Input(tensor=states, name='state_inputs')
 
     # ===== Select the frames to be used
     rand_index_0 = tf.Variable(tf.random_uniform((), minval=0,
@@ -133,37 +241,6 @@ def build_O_model(self, frames, actions, states, context_frames, Ec, Eo, A, Do, 
     # --> change minval to 0
     rand_index = tf.Variable(
         tf.random_uniform((), minval=0, maxval=seq_len, dtype='int32')).initialized_value()  # --> !!!!!
-
-    if gaussian_o:
-        # xo = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, rand_index+1, -1, -1, -1))
-        xo = frame_inputs
-    else:
-        # xo = tf.slice(frame_inputs, (0, rand_index, 0, 0, 0), (-1, 1, -1, -1, -1))
-        xo = frame_inputs
-
-    if actions is not None:
-        # a = tf.slice(action_inputs, (0, 0, 0), (batch_size, rand_index+1, a_dim))
-        a = action_inputs
-        a_in = a
-        ins = [frame_inputs, action_inputs]
-    if states is not None:
-        # s = tf.slice(state_inputs, (0, 0, 0), (batch_size, rand_index + 1, s_dim))
-        s = state_inputs
-        a_in = s
-        ins = [frame_inputs, state_inputs]
-    if actions is not None and states is not None:
-        a_in = K.concatenate([a, s], axis=-1)
-        ins = [frame_inputs, action_inputs, state_inputs]
-
-    if gaussian_a:
-        initial_state_a = lstm_initial_state_zeros(units=lstm_units, n_layers=lstm_layers, batch_size=batch_size)
-        ins.append(initial_state_a)
-    if gaussian_o:
-        initial_state_o = lstm_initial_state_zeros(units=lstm_o_units, n_layers=lstm_layers, batch_size=batch_size)
-        ins.append(initial_state_o)
-
-    # initial_state = lstm_initial_state_zeros(units=512, n_layers=2, batch_size=batch_size)  # --> !!!
-    # ins.append(initial_state)
 
     # == Autoencoder
     hc, skips = Ec(xc_0)
