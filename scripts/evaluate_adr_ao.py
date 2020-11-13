@@ -8,12 +8,15 @@ from models.encoder_decoder import load_recurrent_encoder
 from models.action_net import load_action_net
 from models.action_net import load_recurrent_action_net
 import tensorflow.python.keras.backend as K
+import matplotlib.pyplot as plt
+import numpy as np
+from utils.utils import save_gifs
 
 
 def main():
 
     bs = 32
-    seq_len = 12
+    seq_len = 30
     mode = 'train'
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
     ckpt_dir = os.path.join('/home/mandre/adr/trained_models/bair')
@@ -22,7 +25,7 @@ def main():
                                                  dataset_dir=dataset_dir, sequence_length_train=seq_len,
                                                  sequence_length_test=seq_len)
 
-    gpu_options = tf.GPUOptions(visible_device_list='1')
+    gpu_options = tf.GPUOptions(visible_device_list='0')
     config = tf.ConfigProto(gpu_options=gpu_options)
 
     evaluate_autoencoder_A(frames,
@@ -38,22 +41,23 @@ def main():
                            lstm_units=256,
                            lstm_layers=1,
                            steps=steps,
-                           ec_filename='Ec_a_test.h5',
-                           d_filename='D_a_test.h5',
-                           a_filename='A_a_test.h5',
-                           l_filename='L_a_test.h5',
+                           ec_filename='Ec_a_test_agg.h5',
+                           d_filename='D_a_test_agg.h5',
+                           a_filename='A_a_test_agg.h5',
+                           l_filename='L_a_test_agg.h5',
                            set_states=False,
                            config=config,
                            evaluate=True,
-                           predict=False,
-                           random_context_frames=False)
+                           predict=True,
+                           random_window=False,
+                           eval_kld=True)
 
 
 def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_frames=5, gaussian=False,
                            hc_dim=128, ha_dim=16, z_dim=10, units=256, config=None, steps=None,
                            lstm_units=256, lstm_layers=1, ec_filename='Ec.h5', d_filename='Da.h5',
                            a_filename='A.h5', l_filename='L.h5', set_states=False, evaluate=False, predict=True,
-                           random_context_frames=False):
+                           random_window=False, eval_kld=False):
 
     bs, seq_len, w, h, c = [int(s) for s in frames.shape]
     a_dim = int(actions.shape[-1]) if actions is not None else 0
@@ -104,15 +108,27 @@ def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_
                    lstm_units=lstm_units,
                    lstm_layers=lstm_layers,
                    training=False,
-                   random_context_frames=random_context_frames)
+                   random_window=random_window)
 
     if evaluate:
         model.evaluate(x=None, steps=steps)
 
     if predict:
-        x, imgs = model.predict(x=None, steps=steps)
+        x, imgs, mu, logvar = model.predict(x=None, steps=steps)
+
+        if eval_kld:
+            def KLD(_mu, _logvar):
+                return -0.5 * np.mean(1 + _logvar - np.power(_mu, 2) - np.exp(_logvar), axis=0, keepdims=True)
+            _KLD = KLD(mu, logvar)
+            _KLD /= 2.0
+            print(np.arange(z_dim).shape)
+            print(_KLD.squeeze().shape)
+            plt.bar(np.arange(z_dim), np.mean(_KLD.squeeze(), axis=0))
+            plt.savefig('/home/mandre/adr/gifs/kld_aggressive.png')
+        save_gifs(sequence=np.clip(x[:bs], a_min=0.0, a_max=1.0), name='pred_a', save_dir=os.path.join('/home/mandre/adr/gifs'))
+        save_gifs(sequence=np.clip(imgs[:bs], a_min=0.0, a_max=1.0), name='gt', save_dir=os.path.join('/home/mandre/adr/gifs'))
         return x, imgs
-    return
+    return None, None
 
 
 if __name__ == '__main__':

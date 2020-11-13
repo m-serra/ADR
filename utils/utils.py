@@ -1,6 +1,8 @@
 import os
+import numpy as np
 import tensorflow as tf
 from termcolor import colored
+import moviepy.editor as mpy
 from data_readers.bair_data_reader import BairDataReader
 from data_readers.google_push_data_reader import GooglePushDataReader
 from robonet.datasets import load_metadata
@@ -8,7 +10,7 @@ from robonet.datasets.robonet_dataset import RoboNetDataset
 
 
 def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12, sequence_length_test=12,
-             shuffle=True):
+             shuffle=True, initializable=False):
 
     assert dataset in ['bair', 'google', 'robonet']
     assert mode in ['train', 'val', 'test']
@@ -20,7 +22,8 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                            sequence_length_train=sequence_length_train,
                            sequence_length_test=sequence_length_test,
                            shuffle=shuffle,
-                           batch_repeat=1)
+                           batch_repeat=1,
+                           initializable=initializable)
     elif dataset == 'google':
         d = GooglePushDataReader(dataset_dir=dataset_dir,  # '/media/Data/datasets/google_push/push/',
                                  batch_size=batch_size,
@@ -39,11 +42,10 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
         d_val = RoboNetDataset(batch_size=batch_size, dataset_files_or_metadata=val_database,
                                hparams={'img_size': [64, 64], 'target_adim': 2, 'target_sdim': 3})
 
-    """
     d.train_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_10174_to_10429.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1024_to_1279.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_10430_to_10685.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_10686_to_10941.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1024_to_1279.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10430_to_10685.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10686_to_10941.tfrecords',
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10942_to_11197.tfrecords',
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11198_to_11453.tfrecords',
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11454_to_11709.tfrecords',
@@ -52,17 +54,16 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12222_to_12477.tfrecords',
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
                          # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
 
-    d.val_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
-                       '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
+    d.val_filenames = [# '/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
+                       # '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
                        '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
-    """
 
     if dataset == 'robonet':
         frames = tf.squeeze(d_train['images'])  # images, states, and actions are from paired
@@ -111,7 +112,9 @@ class ModelCheckpoint(tf.keras.callbacks.Callback):
         assert criteria in ['train_rec', 'val_rec'], 'criteria must be either train_rec or val_rec'
 
     def on_epoch_end(self, epoch, logs=None):
+        # train_loss = logs.get('rec_pred')
         train_loss = logs.get('rec_loss')
+        # val_loss = logs.get('val_rec_pred')
         val_loss = logs.get('val_rec_loss')
         self.model_checkpoint(train_loss, val_loss, epoch)
 
@@ -124,8 +127,8 @@ class ModelCheckpoint(tf.keras.callbacks.Callback):
 
         loss = criteria_map.get(self.criteria)
 
-        # if loss < self.best_loss:
-        if loss < self.best_loss or train_loss < self.best_train_loss:  # --> !!!!
+        if loss < self.best_loss:
+        #  if loss < self.best_loss or train_loss < self.best_train_loss:  # --> !!!!
             for m, f in zip(self.models, self.filenames):
                 if self.keep_all:
                     f = f.replace('.h5', '') + '_t' + str(train_loss).replace('0.', '') + \
@@ -153,3 +156,30 @@ class ModelCheckpoint(tf.keras.callbacks.Callback):
             print(colored('Best val loss: %.7f, epoch %d' % (self.best_val_loss, self.best_val_epoch), 'green'))
         return
 
+
+def npy_to_gif(npy, filename, fps=10):
+    clip = mpy.ImageSequenceClip(list(npy), fps=fps, )
+    clip.write_gif(filename)
+
+
+def save_gifs(sequence, name, save_dir):
+
+    SEQ_LEN = sequence.shape[1]
+    BATCH_SIZE = sequence.shape[0]
+
+    for b in range(BATCH_SIZE):
+        k = []
+        for i in range(SEQ_LEN):
+            k.append(sequence[b, i, :, :, :])
+
+        video = np.stack(k, ) * 255
+        npy_to_gif(video, os.path.join(save_dir, name + '_batch_' + str(b) + '.gif'))
+    return
+
+
+def print_loss(loss, loss_names, title=None):
+    assert len(loss) == len(loss_names)
+    if title is not None:
+        print('\n===== ' + title + ' =====')
+    c = '  '.join('%s: %.6f' % t for t in zip(loss_names, loss))
+    print(c)

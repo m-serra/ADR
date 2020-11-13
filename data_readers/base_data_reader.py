@@ -18,7 +18,8 @@ class BaseDataReader(object):
                  train_dir_name='train',
                  test_dir_name='test',
                  batch_repeat=1,
-                 block_length=1):
+                 block_length=1,
+                 initializable=False):
         """
         Dataset class for the BAIR and Google Push datasets.
 
@@ -59,6 +60,7 @@ class BaseDataReader(object):
         self.sequence_length_to_use = None
         self.batch_repeat = batch_repeat
         self.block_length = block_length
+        self.initializable = initializable
 
     def set_filenames(self):
 
@@ -137,7 +139,10 @@ class BaseDataReader(object):
 
         dataset = dataset.batch(self.batch_size, drop_remainder=True)
 
-        iterator = dataset.make_one_shot_iterator()
+        if self.initializable:
+            iterator = dataset.make_initializable_iterator()
+        else:
+            iterator = dataset.make_one_shot_iterator()
 
         return iterator
 

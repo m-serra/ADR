@@ -45,7 +45,7 @@ def lstm_initial_state_zeros_np(units, n_layers, batch_size):
     return initial_state
 
 
-def simple_lstm(batch_shape, output_dim, n_layers=2, units=256, name=None, reg_lambda=0.0):
+def simple_lstm(batch_shape, output_dim=10, n_layers=2, units=256, name=None, reg_lambda=0.0):
 
     def make_cell(lstm_size):
         return LSTMCell(lstm_size, activation='tanh', kernel_initializer='glorot_uniform', unit_forget_bias=False,
@@ -71,7 +71,7 @@ def simple_lstm(batch_shape, output_dim, n_layers=2, units=256, name=None, reg_l
     return model
 
 
-def lstm_gaussian(batch_shape, output_dim, n_layers=2, units=256, reparameterize=False, name=None, reg_lambda=0.0):
+def lstm_gaussian(batch_shape, output_dim=10, n_layers=2, units=256, reparameterize=False, name=None, reg_lambda=0.0):
     def make_cell(lstm_size):
         return LSTMCell(lstm_size, activation='tanh', kernel_initializer='he_normal',
                         recurrent_regularizer=l2(reg_lambda))
@@ -84,7 +84,7 @@ def lstm_gaussian(batch_shape, output_dim, n_layers=2, units=256, reparameterize
     _in = Input(batch_shape=[batch_shape[0], None, batch_shape[-1]])
     initial_state = initial_state_placeholder(units, n_layers, batch_size=batch_shape[0])
 
-    embed = TimeDistributed(embed_net)(_in)  # --> Try to change input_dim to lstm_units
+    embed = TimeDistributed(embed_net)(_in)
     out = lstm(embed, initial_state=initial_state)
     h, state = out[0], out[1:]
     # z, mu, logvar = sample(h)
@@ -100,9 +100,8 @@ def load_lstm(batch_shape, output_dim, lstm_units, n_layers, ckpt_dir, filename,
     weight_path = os.path.join(ckpt_dir, filename)
 
     if load_model_state:
-        custom_objects = None
-        if lstm_type == 'gaussian':
-            custom_objects = {'Sample': Sample}
+        # this only allows output dim to be the predefined value
+        custom_objects = {'Sample': Sample} if lstm_type == 'gaussian' else None
         lstm = load_model(weight_path, custom_objects=custom_objects)
     else:
         assert lstm_type in ['simple', 'gaussian'], 'Argument lstm_type must be \'simple\' or \'gaussian\''
@@ -123,7 +122,7 @@ def load_lstm(batch_shape, output_dim, lstm_units, n_layers, ckpt_dir, filename,
 
 class Sample(layers.Layer):
 
-    def __init__(self, output_dim, reparameterization_flag=True, **kwargs):
+    def __init__(self, output_dim=10, reparameterization_flag=True, **kwargs):
         self.output_dim = output_dim
         super(Sample, self).__init__(**kwargs)
         self.reparameterization_flag = reparameterization_flag
