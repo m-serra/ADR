@@ -12,7 +12,7 @@ from tensorflow.python.keras.regularizers import l2
 from models.lstm import Sample
 
 
-def action_net(batch_shape, units, ha_dim, name='A'):
+def action_net(batch_shape, units, h_dim, name='A',  **kwargs):
 
     """
     seq_len can be passed as None if the length of the sequence is not known but then Sample won't work as
@@ -33,13 +33,13 @@ def action_net(batch_shape, units, ha_dim, name='A'):
     ha = BatchNormalization()(ha)
     ha = LeakyReLU(alpha=0.2)(ha)
     # ha = LSTM(units=256, kernel_initializer='he_normal')(ha)
-    ha = Dense(units=ha_dim, activation='tanh', kernel_initializer='glorot_uniform')(ha)
+    ha = Dense(units=h_dim, activation='tanh', kernel_initializer='glorot_uniform')(ha)
     model = Model(inputs=_in, outputs=ha, name=name)
 
     return model
 
 
-def recurrent_action_net(batch_shape, units, ha_dim, name='A', initializer='he_uniform',
+def recurrent_action_net(batch_shape, units, h_dim, name='A', initializer='he_uniform',
                          output_initializer='glorot_uniform', dense_lambda=0.0,
                          recurrent_lambda=0.0):
 
@@ -64,7 +64,7 @@ def recurrent_action_net(batch_shape, units, ha_dim, name='A', initializer='he_u
 
     ha = LSTM(units=units, return_sequences=True, kernel_initializer='glorot_uniform',
               kernel_regularizer=l2(recurrent_lambda), recurrent_regularizer=l2(recurrent_lambda))(ha)
-    ha = TimeDistributed(Dense(units=ha_dim, activation='tanh', kernel_initializer=output_initializer,
+    ha = TimeDistributed(Dense(units=h_dim, activation='tanh', kernel_initializer=output_initializer,
                                kernel_regularizer=l2(dense_lambda)))(ha)
 
     model = Model(inputs=_in, outputs=ha, name=name)
@@ -72,13 +72,13 @@ def recurrent_action_net(batch_shape, units, ha_dim, name='A', initializer='he_u
     return model
 
 
-def load_action_net(batch_shape, units, ha_dim, ckpt_dir, filename, trainable=False, name='A', load_model_state=True):
+def load_action_net(batch_shape, units, h_dim, ckpt_dir, filename, trainable=False, name='A', load_model_state=True):
     weight_path = os.path.join(ckpt_dir, filename)
 
     if load_model_state:
         A = load_model(weight_path)
     else:
-        A = action_net(batch_shape=batch_shape, units=units, ha_dim=ha_dim, name=name)
+        A = action_net(batch_shape=batch_shape, units=units, ha_dim=h_dim, name=name)
         A.load_weights(weight_path)
 
     if trainable is False:
@@ -86,14 +86,14 @@ def load_action_net(batch_shape, units, ha_dim, ckpt_dir, filename, trainable=Fa
     return A
 
 
-def load_recurrent_action_net(batch_shape, units, ha_dim, ckpt_dir, filename, trainable=False, name='A',
+def load_recurrent_action_net(batch_shape, units, h_dim, ckpt_dir, filename, trainable=False, name='A',
                               load_model_state=True):
     weight_path = os.path.join(ckpt_dir, filename)
 
     if load_model_state:
         A = load_model(weight_path)
     else:
-        A = recurrent_action_net(batch_shape=batch_shape, units=units, ha_dim=ha_dim, name=name)
+        A = recurrent_action_net(batch_shape=batch_shape, units=units, ha_dim=h_dim, name=name)
         A.load_weights(weight_path)
 
     if trainable is False:

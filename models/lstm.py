@@ -45,7 +45,7 @@ def lstm_initial_state_zeros_np(units, n_layers, batch_size):
     return initial_state
 
 
-def simple_lstm(batch_shape, output_dim=10, n_layers=2, units=256, name=None, reg_lambda=0.0):
+def simple_lstm(batch_shape, h_dim=10, n_layers=2, units=256, name=None, reg_lambda=0.0, **kwargs):
 
     def make_cell(lstm_size):
         return LSTMCell(lstm_size, activation='tanh', kernel_initializer='glorot_uniform', unit_forget_bias=False,
@@ -55,7 +55,7 @@ def simple_lstm(batch_shape, output_dim=10, n_layers=2, units=256, name=None, re
     lstm_cells = [make_cell(units) for _ in range(n_layers)]
     lstm = RNN(lstm_cells, return_sequences=True, return_state=True)
     embed_net = Dense(units=units, activation='linear', use_bias=False)  # --> !!!
-    output_net = Dense(units=output_dim, activation='tanh')
+    output_net = Dense(units=h_dim, activation='tanh')
 
     _in = Input(batch_shape=[batch_shape[0], None, batch_shape[-1]])
     initial_state = initial_state_placeholder(units, n_layers, batch_size=batch_shape[0])
@@ -71,7 +71,8 @@ def simple_lstm(batch_shape, output_dim=10, n_layers=2, units=256, name=None, re
     return model
 
 
-def lstm_gaussian(batch_shape, output_dim=10, n_layers=2, units=256, reparameterize=False, name=None, reg_lambda=0.0):
+def lstm_gaussian(batch_shape, h_dim=10, n_layers=2, units=256, reparameterize=False, name=None, reg_lambda=0.0,
+                  **kwargs):
     def make_cell(lstm_size):
         return LSTMCell(lstm_size, activation='tanh', kernel_initializer='he_normal',
                         recurrent_regularizer=l2(reg_lambda))
@@ -80,7 +81,7 @@ def lstm_gaussian(batch_shape, output_dim=10, n_layers=2, units=256, reparameter
     lstm_cells = [make_cell(units) for _ in range(n_layers)]
     lstm = RNN(lstm_cells, return_sequences=True, return_state=True, name='lstm_model')
     embed_net = Dense(units=units, activation='linear')
-    sample = Sample(output_dim=output_dim, reparameterization_flag=reparameterize)
+    sample = Sample(output_dim=h_dim, reparameterization_flag=reparameterize)
     _in = Input(batch_shape=[batch_shape[0], None, batch_shape[-1]])
     initial_state = initial_state_placeholder(units, n_layers, batch_size=batch_shape[0])
 
@@ -95,7 +96,7 @@ def lstm_gaussian(batch_shape, output_dim=10, n_layers=2, units=256, reparameter
     return model
 
 
-def load_lstm(batch_shape, output_dim, lstm_units, n_layers, ckpt_dir, filename,
+def load_lstm(batch_shape, h_dim, lstm_units, n_layers, ckpt_dir, filename,
               lstm_type='simple', trainable=False, load_model_state=True, name='L'):
     weight_path = os.path.join(ckpt_dir, filename)
 
@@ -107,10 +108,10 @@ def load_lstm(batch_shape, output_dim, lstm_units, n_layers, ckpt_dir, filename,
         assert lstm_type in ['simple', 'gaussian'], 'Argument lstm_type must be \'simple\' or \'gaussian\''
 
         if lstm_type == 'simple':
-            lstm = simple_lstm(batch_shape=batch_shape, output_dim=output_dim, n_layers=n_layers, units=lstm_units,
+            lstm = simple_lstm(batch_shape=batch_shape, h_dim=h_dim, n_layers=n_layers, units=lstm_units,
                                name=name)
         else:
-            lstm = lstm_gaussian(batch_shape=batch_shape, output_dim=output_dim, n_layers=n_layers, units=lstm_units,
+            lstm = lstm_gaussian(batch_shape=batch_shape, h_dim=h_dim, n_layers=n_layers, units=lstm_units,
                                  reparameterize=trainable, name=name)
         lstm.load_weights(weight_path)
 
@@ -131,14 +132,13 @@ class Sample(layers.Layer):
         self.logvar_net = Dense(units=self.output_dim, activation='linear')
 
     def call(self, inputs, **kwargs):
-
         h = inputs
 
         mu = self.mu_net(h)
         logvar = self.logvar_net(h)
 
         if self.reparameterization_flag:
-            epsilon = K.random_normal(shape=[self.output_dim], mean=0.0, stddev=1.0)
+            epsilon = K.random_normal(shape=tf.shape(logvar), mean=0.0, stddev=1.0)
             z = mu + K.exp(0.5 * logvar) * epsilon
         else:
             z = tf.sigmoid(K.random_normal(shape=tf.shape(mu), mean=0.0, stddev=1.0))

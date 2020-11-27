@@ -8,6 +8,10 @@ from tensorflow.python.keras.losses import mean_squared_error
 from tensorflow.python.keras.losses import mean_absolute_error
 from tensorflow.python.keras.losses import binary_crossentropy
 from tensorflow.python.keras.metrics import binary_accuracy
+from models.encoder_decoder import image_decoder, load_decoder
+from models.encoder_decoder import load_recurrent_encoder, recurrent_image_encoder
+from models.action_net import action_net, load_action_net, load_recurrent_action_net, recurrent_action_net
+from models.lstm import lstm_gaussian, load_lstm
 from models.encoder_decoder import repeat_skips
 from models.encoder_decoder import slice_skips
 from models.lstm import lstm_initial_state_zeros
@@ -55,13 +59,38 @@ def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a
     return frame_inputs, action_state, initial_state_a, initial_state, ins
 
 
+def get_sub_model(name, batch_shape, h_dim, ckpt_dir, filename, trainable, load_model_state, load_flag, **kwargs):
+
+    f_inst = {'Ec': recurrent_image_encoder, 'A': action_net, 'rA': recurrent_action_net,
+              'La': lstm_gaussian, 'Da': image_decoder}
+
+    f_load = {'Ec': load_recurrent_encoder, 'A': load_action_net, 'rA': load_recurrent_action_net,
+              'La': load_lstm, 'Da': load_decoder}
+
+    f = f_load.get(name) if load_flag else f_inst.get(name)
+
+    model = f(name=name, batch_shape=batch_shape, h_dim=h_dim, ckpt_dir=ckpt_dir, filename=filename,
+              trainable=trainable, load_model_state=load_model_state, **kwargs)
+
+    return model
+
+
+def freezeLayer(layer, unfreeze=False):
+    if unfreeze is True:
+        layer.trainable = True
+    else:
+        layer.trainable = False
+    if hasattr(layer, 'layers'):
+        for l in layer.layers:
+            freezeLayer(l, unfreeze)
+
+
 def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01, gaussian=False, kl_weight=None,
            L=None, use_seq_len=12, lstm_units=None, lstm_layers=None, training=True, reconstruct_random_frame=False,
            random_window=True):
 
     bs, seq_len, w, h, c = [int(s) for s in frames.shape]
     assert seq_len >= use_seq_len
-
     frame_inputs, action_state, initial_state, _, ins = get_ins(frames, actions, states, use_seq_len=use_seq_len,
                                                                 random_window=random_window, gaussian=gaussian,
                                                                 a_units=lstm_units, a_layers=lstm_layers)
@@ -110,21 +139,38 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
     rec_loss = mean_squared_error(x_to_recover, x_recovered)
     sim_loss = mean_squared_error(hc_0, hc_1)
 
-    # == Full model
-    model = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
-    model.add_metric(rec_loss, name='rec_loss', aggregation='mean')
-    model.add_metric(sim_loss, name='sim_loss', aggregation='mean')
+    # == Frozen discriminator model
+    E = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
+    E.add_metric(rec_loss, name='rec_loss', aggregation='mean')
+    E.add_metric(sim_loss, name='sim_loss', aggregation='mean')
 
     if gaussian:
         kl_loss = kl_unit_normal(mu, logvar)
-        model.add_metric(kl_loss, name='kl_loss', aggregation='mean')
-        model.add_loss(K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
+        E.add_metric(kl_loss, name='kl_loss', aggregation='mean')
+        E.add_loss(K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
     else:
-        model.add_loss(K.mean(rec_loss) + K.mean(sim_loss))
+        E.add_loss(K.mean(rec_loss) + K.mean(sim_loss))
 
-    model.compile(optimizer=Adam(lr=learning_rate))
+    freezeLayer(E.get_layer(name='Da'))
+    E.compile(optimizer=Adam(lr=learning_rate))
 
-    return model
+    # == Full model
+    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
+    ED.add_metric(rec_loss, name='rec_loss', aggregation='mean')
+    ED.add_metric(sim_loss, name='sim_loss', aggregation='mean')
+
+    if gaussian:
+        kl_loss = kl_unit_normal(mu, logvar)
+        ED.add_metric(kl_loss, name='kl_loss', aggregation='mean')
+        ED.add_loss(K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
+    else:
+        ED.add_loss(K.mean(rec_loss) + K.mean(sim_loss))
+
+    freezeLayer(ED.get_layer(name='Da'), unfreeze=True)
+
+    ED.compile(optimizer=Adam(lr=learning_rate))
+
+    return ED, E
 
 
 def adr(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, gaussian_a=False, use_seq_len=12,
@@ -409,3 +455,4 @@ def kl_unit_normal(_mean, _logvar):
     # See: https://stats.stackexchange.com/questions/318184/kl-loss-with-a-unit-gaussian
     _kl_loss = - 0.5 * K.sum(1.0 + _logvar - K.square(_mean) - K.exp(_logvar), axis=[-1, -2])
     return _kl_loss
+

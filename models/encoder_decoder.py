@@ -87,10 +87,10 @@ def image_encoder(image_shape, output_dim, time_distr=True, name=None, kernel_si
     return encoder
 
 
-def recurrent_image_encoder(image_shape, output_dim, name, kernel_size=4, size=64, conv_initializer='he_uniform',
-                            rec_initializer='glorot_uniform', conv_lambda=0.0, recurrent_lambda=0.0):
+def recurrent_image_encoder(batch_shape, h_dim, name, kernel_size=4, size=64, conv_initializer='he_uniform',
+                            rec_initializer='glorot_uniform', conv_lambda=0.0, recurrent_lambda=0.0, **kwargs):
 
-    _in = Input(batch_shape=image_shape)
+    _in = Input(batch_shape=batch_shape)
 
     h1 = base_conv_layer(_in, size, strides=2, kernel_size=kernel_size, reg_lambda=conv_lambda, time_distr=True,
                          kernel_initializer=conv_initializer)
@@ -107,7 +107,7 @@ def recurrent_image_encoder(image_shape, output_dim, name, kernel_size=4, size=6
                          kernel_initializer=conv_initializer)
 
     # 4x4 -> 1x1
-    h5 = base_convlstm_layer(h4, output_dim, strides=1, kernel_size=4, padding='valid', use_bias=True,
+    h5 = base_convlstm_layer(h4, h_dim, strides=1, kernel_size=4, padding='valid', use_bias=True,
                              kernel_initializer=rec_initializer, reg_lambda=recurrent_lambda)
 
     h5 = Lambda(lambda x: tf.squeeze(tf.squeeze(x, axis=2), axis=2))(h5)
@@ -116,13 +116,13 @@ def recurrent_image_encoder(image_shape, output_dim, name, kernel_size=4, size=6
     return encoder
 
 
-def image_decoder(h_dim, name=None, time_distr=True, output_activation='sigmoid', output_channels=3, reg_lambda=0.0,
-                  kernel_size=4, size=64, initializer='he_uniform', output_initializer='glorot_uniform',
-                  output_regularizer=None, skips_size=64):
+def image_decoder(batch_shape, name=None, time_distr=True, output_activation='sigmoid', output_channels=3,
+                  reg_lambda=0.0, kernel_size=4, size=64, initializer='he_uniform', output_initializer='glorot_uniform',
+                  output_regularizer=None, skips_size=64, **kwargs):
     """Add input options: kernel_size, filters, ...
     """
 
-    z = Input(shape=[None, h_dim])
+    z = Input(batch_shape=batch_shape)
     skip_0 = Input(shape=[None, 32, 32, skips_size])
     skip_1 = Input(shape=[None, 16, 16, skips_size*2])
     skip_2 = Input(shape=[None, 8, 8, skips_size*4])
@@ -191,15 +191,15 @@ def image_decoder_no_skips(h_dim, name=None, output_activation='sigmoid', output
     return decoder
 
 
-def load_decoder(h_dim, model_name, ckpt_dir, filename, output_activation='sigmoid', output_initializer='he_uniform',
-                 kernel_size=4, size=64, trainable=False, output_channels=3, load_model_state=True):
+def load_decoder(batch_shape, model_name, ckpt_dir, filename, output_activation='sigmoid', output_channels=3,
+                 output_initializer='glorot_uniform', kernel_size=4, size=64, trainable=False, load_model_state=True):
     weight_path = os.path.join(ckpt_dir, filename)
 
     if load_model_state:
         D = load_model(weight_path)
     else:
         # --> output channels argument should be removed in future
-        D = image_decoder(h_dim=h_dim, name=model_name, output_activation=output_activation, size=size,
+        D = image_decoder(batch_shape=batch_shape, name=model_name, output_activation=output_activation, size=size,
                           kernel_size=kernel_size, output_initializer=output_initializer,
                           output_channels=output_channels)
         D.load_weights(weight_path)
@@ -254,7 +254,7 @@ def load_recurrent_encoder(batch_shape, h_dim, ckpt_dir, filename, size=64, conv
     if load_model_state:
         E = load_model(weight_path, custom_objects={'layer_norm_tanh': layer_norm_tanh})
     else:
-        E = recurrent_image_encoder(image_shape=batch_shape, output_dim=h_dim, size=size,
+        E = recurrent_image_encoder(batch_shape=batch_shape, h_dim=h_dim, size=size,
                                     conv_lambda=conv_lambda, recurrent_lambda=recurrent_lambda,
                                     kernel_size=kernel_size, name=name)
         E.load_weights(weight_path)
