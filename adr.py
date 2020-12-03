@@ -155,7 +155,7 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
     E.compile(optimizer=Adam(lr=learning_rate))
 
     # == Full model
-    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
+    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar, skips])
     ED.add_metric(rec_loss, name='rec_loss', aggregation='mean')
     ED.add_metric(sim_loss, name='sim_loss', aggregation='mean')
 
@@ -170,7 +170,14 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
 
     ED.compile(optimizer=Adam(lr=learning_rate))
 
-    return ED, E
+    h_placeholder = Input(batch_shape=hc_ha.shape)
+    skips_placeholder = [Input(batch_shape=s.shape) for s in skips]
+    print('IN', h_placeholder, skips_placeholder)
+    x_recovered = D([h_placeholder, skips_placeholder])
+    d = Model(inputs=[h_placeholder, skips_placeholder], outputs=x_recovered)
+    d.compile(optimizer=Adam(lr=learning_rate))
+
+    return ED, E, d
 
 
 def adr(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, gaussian_a=False, use_seq_len=12,

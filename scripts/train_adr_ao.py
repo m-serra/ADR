@@ -143,22 +143,22 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
         ckpt_models.append(L)
         filenames.append(l_filename)
 
-    ED, E = adr_ao(frames,
-                   actions,
-                   states,
-                   context_frames,
-                   Ec=Ec,
-                   A=A,
-                   D=D,
-                   use_seq_len=use_seq_len,
-                   learning_rate=learning_rate,
-                   gaussian=gaussian,
-                   kl_weight=kl_weight,
-                   L=L, lstm_units=lstm_units,
-                   lstm_layers=lstm_layers,
-                   training=True,
-                   random_window=random_window,
-                   reconstruct_random_frame=reconstruct_random_frame)
+    ED, E, D = adr_ao(frames,
+                      actions,
+                      states,
+                      context_frames,
+                      Ec=Ec,
+                      A=A,
+                      D=D,
+                      use_seq_len=use_seq_len,
+                      learning_rate=learning_rate,
+                      gaussian=gaussian,
+                      kl_weight=kl_weight,
+                      L=L, lstm_units=lstm_units,
+                      lstm_layers=lstm_layers,
+                      training=True,
+                      random_window=random_window,
+                      reconstruct_random_frame=reconstruct_random_frame)
 
     print(len(ED._collected_trainable_weights))
     print(len(E._collected_trainable_weights))
@@ -173,7 +173,7 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
     aggressive_flag = False  # --> !!!
     aggressive_cycles = 10  # the average cycles according to the paper. Implement stopping condition later
     iter_ = 0
-    zmin, zmax, dz = -20, 20, 0.1  #  check why they were using these numbers
+    zmin, zmax, dz = -20, 20, 0.01  #  check why they were using these numbers
     grid_z = generate_grid(zmin, zmax, dz, ndim=1)
 
     sess.run(train_iterator.initializer)
@@ -226,7 +226,7 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
 
         if e % 25 == 0 and (save_gifs_flag or save_kl_flag):
 
-            x, imgs, mu, logvar = ED.predict(x=None, steps=1)
+            x, imgs, mu, logvar, _ = ED.predict(x=None, steps=1)
 
             if save_gifs_flag is True:
                 save_gifs(sequence=np.clip(x[:bs], a_min=0.0, a_max=1.0), name='pred_a_not_agg',
@@ -253,8 +253,8 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
         # if save_gifs_flag:  # --> DELETE THIS
         model_ckpt.on_epoch_end(epoch=e, logs={'rec_loss': train_loss[1], 'val_rec_loss': 0.0})
 
-        plot_multiple(model=ED, plot_data=plot_data, grid_z=grid_z, iter_=iter_, ckpt_dir=ckpt_dir, nz=z_dim,
-                      aggressive=aggressive_flag)
+        plot_multiple(model=ED, model_decoder=D, plot_data=plot_data, grid_z=grid_z, iter_=iter_, ckpt_dir=ckpt_dir,
+                      nz=z_dim, aggressive=aggressive_flag)
 
         if e >= aggressive_cycles - 1:
             aggressive_flag = False

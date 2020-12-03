@@ -8,3 +8,5 @@ trained_models/*
 *.swp
 /results
 /gifs
+/plot_data
+/plot_figure

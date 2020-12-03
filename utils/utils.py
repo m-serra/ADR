@@ -8,6 +8,7 @@ from termcolor import colored
 import moviepy.editor as mpy
 from data_readers.bair_data_reader import BairDataReader
 from data_readers.google_push_data_reader import GooglePushDataReader
+from models.encoder_decoder import repeat_skips, slice_skips
 from robonet.datasets import load_metadata
 from robonet.datasets.robonet_dataset import RoboNetDataset
 from adr import kl_unit_normal
@@ -190,7 +191,7 @@ def print_loss(loss, loss_names, title=None):
     print(c)
 
 
-def plot_multiple(model, plot_data, grid_z, iter_, ckpt_dir, nz, aggressive,steps=8):
+def plot_multiple(model, model_decoder, plot_data, grid_z, iter_, ckpt_dir, nz, aggressive, steps=8):
 
     loc = np.zeros(nz)
     scale = np.ones(nz)
@@ -198,50 +199,60 @@ def plot_multiple(model, plot_data, grid_z, iter_, ckpt_dir, nz, aggressive,step
     prior = norm(loc=loc, scale=scale)
 
     bs = plot_data.shape[0]
-    # plot_data, sents_len = plot_data
-
-    num_plot = bs  # --> !!!!
-
-    # plot_data_list = torch.chunk(plot_data, round(num_plot / bs))
-    plot_data_list = plot_data
-
     infer_posterior_mean = []
     report_loss_kl = report_mi = report_num_sample = 0
 
     for s in range(steps):
+        pred, data, mu, logvar, skips_0, skips_1, skips_2, skips_3 = model.predict(x=None, steps=1)
+        _skips = [skips_0[:, :1], skips_1[:, :1], skips_2[:, :1], skips_3[:, :1]]
+        skips = [np.repeat(s, repeats=4000, axis=1) for s in _skips]
+        print('SKIPS', skips[0].shape)
 
-        pred, data, mu, logvar = model.predict(x=None, steps=1)
+        grid_z_batched = np.repeat(np.expand_dims(grid_z, axis=0), repeats=bs, axis=0)
+        grid_z_batched = np.repeat(grid_z_batched, repeats=154, axis=-1)  # --> ???????????????
+        print('grid z', grid_z_batched.shape)
+        # print('OUT', grid_z_batched, skips)
+        grid_pred = model_decoder.predict(x=[grid_z_batched, skips])
 
+        # --> THIS DOESNT INFLUENCE THE PLOTS
         report_loss_kl += np.sum(KL(mu, logvar))
         # report_loss_kl += model.KL(data).sum().item()
-        print('KL:', report_loss_kl)
 
         report_num_sample += bs
 
+        # --> THIS DOESNT INFLUENCE THE PLOTS
         # report_mi += calc_mi_q(model, data) * bs
-        report_mi += calc_mi(mu, logvar) * bs
-        print('MI:', report_mi)
+        report_mi += calc_mi(mu, logvar) * bs   # --> was getting negative MI
 
         # [batch, 1]
-        posterior_mean = calc_model_posterior_mean(prior, pred, data, grid_z, bs)  # --> =========== posterior mean
-        print('Posterior Mean:', posterior_mean.shape)
+        # --> ===============================================
+        posterior_mean = calc_model_posterior_mean(prior, grid_pred, data, grid_z, bs)  # should output shape [bs, nz]
+        # print('Posterior mean:', posterior_mean)
+        print('Posterior mean:', posterior_mean.shape, np.max(posterior_mean), np.min(posterior_mean), np.mean(posterior_mean))
 
-        # infer_mean = calc_infer_mean(model, data)
-        infer_mean = mu
-        print('Infer Mean', infer_mean.shape)
+        # print('Posterior Mean:', posterior_mean.shape)
+        posterior_mean = np.mean(posterior_mean, axis=1)  # # --> mean added by me
+
+        # infer_mean = calc_infer_mean(model, data)  # shape [bs, nz]
+        infer_mean = mu  # shape [bs, steps, nz]
+        infer_mean = np.mean(infer_mean, axis=1)  # --> mean added by me to average steps
+        # print('Infer Mean', infer_mean.shape)
 
         infer_posterior_mean.append(np.concatenate([posterior_mean, infer_mean], axis=1))
 
     # [*, 2]
     infer_posterior_mean = np.concatenate(infer_posterior_mean, axis=0)
 
-    save_path = os.path.join(ckpt_dir, 'aggr%d_iter%d_multiple.pickle' % (int(aggressive), iter_))
+    # save_path = os.path.join(ckpt_dir, 'aggr%d_iter%d_multiple.pickle' % (int(aggressive), iter_))
+    save_path = os.path.join(os.path.expanduser('~/'), 'adr/plot_data/multiple/aggr%d_iter%d_multiple.pickle'
+                             % (int(aggressive), iter_))
 
-    save_data = {'posterior': infer_posterior_mean[:,0].cpu().numpy(),
-                 'inference': infer_posterior_mean[:,1].cpu().numpy(),
+    # print('True posterior:', infer_posterior_mean[:, 0])
+    # print('Infer posterior:', infer_posterior_mean[:, 1])
+    save_data = {'posterior': infer_posterior_mean[:, 0],
+                 'inference': infer_posterior_mean[:, 1],
                  'kl': report_loss_kl / report_num_sample,
-                 'mi': report_mi / report_num_sample
-                 }
+                 'mi': report_mi / report_num_sample}
     pickle.dump(save_data, open(save_path, 'wb'))
 
 
@@ -272,8 +283,6 @@ def calc_mi(mu, logvar):
 
     mu = np.mean(mu, axis=1)
     logvar = np.mean(logvar, axis=1)
-    print('MU:', type(mu))
-    print('MU:', mu.shape)
 
     bs, nz = mu.shape
 
@@ -282,7 +291,6 @@ def calc_mi(mu, logvar):
 
     # [z_batch, nz]
     z_samples = reparameterize(mu, logvar)
-    print('z_samples', z_samples.shape)
 
     # [1, x_batch, nz]
     mu, logvar = np.expand_dims(mu, axis=0), np.expand_dims(logvar, axis=0)
@@ -335,9 +343,6 @@ def eval_log_model_posterior(prior, pred, data, grid_z, bs):
 
     # (batch_size, k^2, nz)
     grid_z = np.repeat(np.expand_dims(grid_z, axis=0), bs, axis=0)
-    print('GRID Z', grid_z.shape)
-
-    #     expand(bs, *grid_z.size()).contiguous()
 
     # (batch_size, k^2)
     log_comp = eval_complete_ll(prior, pred, data, grid_z)
@@ -350,12 +355,14 @@ def eval_log_model_posterior(prior, pred, data, grid_z, bs):
 
 def eval_complete_ll(prior, pred, data, z):
     """compute log p(z,x)
+       data: is the true target image
+       z: a grid of latent points from which to make a reconstruction
     """
-
     # [batch, nsamples]
     log_prior = eval_prior_dist(prior, z)
-    log_gen = eval_cond_ll(pred, data)
-
+    log_gen = eval_cond_ll(pred, data)  # for each point in z reconstruct and compare with data
+    print('log_prior:', log_prior.shape, log_prior.mean(), log_prior.max(), log_prior.min())
+    print('log_gen:', log_gen.shape, log_gen.mean(), log_gen.max(), log_gen.min())
     return log_prior + log_gen
 
 
@@ -363,7 +370,7 @@ def eval_cond_ll(pred, data):
     """compute log p(x|z)
     """
     # return self.decoder.log_probability(x, z)
-    return np.mean(np.square(pred - data))
+    return np.mean(np.square(pred - data), (2, 3, 4))
 
 
 def eval_prior_dist(prior, zrange):
@@ -414,13 +421,9 @@ def generate_grid(zmin, zmax, dz, ndim=2):
         x = np.arange(start=zmin, stop=zmax, step=dz)
         k = x.shape(0)
 
-        x1 = x.unsqueeze(1).repeat(1, k).view(-1)
+        x1 = np.expand_dims(x, axis=1).repeat(1, k).view(-1)
         x2 = x.repeat(k)
 
         # return torch.cat((x1.unsqueeze(-1), x2.unsqueeze(-1)), dim=-1).to(device), k
-
     elif ndim == 1:
-        # device = torch.device("cuda" if cuda else "cpu")
         return np.expand_dims(np.arange(start=zmin, stop=zmax, step=dz), axis=1)
-               # torch.arange(zmin, zmax, dz).unsqueeze(1).to(device)
-        # return torch.arange(zmin, zmax, dz).unsqueeze(1).to(device)
