@@ -40,8 +40,8 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                                  test_dir_name='push_train',
                                  batch_repeat=1)
     elif dataset == 'robonet':
-        train_database = load_metadata('/home/mandre/RoboNet/hdf5/train')
-        val_database = load_metadata('/home/mandre/RoboNet/hdf5/val2')
+        train_database = load_metadata(os.path.expanduser('~/'), 'RoboNet/hdf5/train')
+        val_database = load_metadata(os.path.expanduser('~/'), 'RoboNet/hdf5/val2')
         train_database = train_database[train_database['robot'] == 'fetch']
         d_train = RoboNetDataset(batch_size=batch_size, dataset_files_or_metadata=train_database,
                                  hparams={'img_size': [64, 64], 'target_adim': 2, 'target_sdim': 3})
@@ -49,26 +49,26 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                                hparams={'img_size': [64, 64], 'target_adim': 2, 'target_sdim': 3})
 
     d.train_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_10174_to_10429.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1024_to_1279.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10430_to_10685.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10686_to_10941.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_10942_to_11197.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11198_to_11453.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11454_to_11709.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11710_to_11965.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_11966_to_12221.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12222_to_12477.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1024_to_1279.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_10430_to_10685.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_10686_to_10941.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_10942_to_11197.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_11198_to_11453.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_11454_to_11709.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_11710_to_11965.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_11966_to_12221.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12222_to_12477.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
 
-    d.val_filenames = [# '/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
-                       # '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
+    d.val_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
+                       '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
                        '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
 
     if dataset == 'robonet':
@@ -191,29 +191,29 @@ def print_loss(loss, loss_names, title=None):
     print(c)
 
 
-def plot_multiple(model, model_decoder, plot_data, grid_z, iter_, ckpt_dir, nz, aggressive, steps=8):
+def plot_multiple(model, model_decoder, bs, grid_z, iter_, ckpt_dir, nz, aggressive, steps=8):
 
     loc = np.zeros(nz)
     scale = np.ones(nz)
     # prior = torch.distributions.normal.Normal(loc=loc, scale=scale)
     prior = norm(loc=loc, scale=scale)
 
-    bs = plot_data.shape[0]
     infer_posterior_mean = []
     report_loss_kl = report_mi = report_num_sample = 0
 
     for s in range(steps):
         pred, data, mu, logvar, skips_0, skips_1, skips_2, skips_3 = model.predict(x=None, steps=1)
         _skips = [skips_0[:, :1], skips_1[:, :1], skips_2[:, :1], skips_3[:, :1]]
-        skips = [np.repeat(s, repeats=4000, axis=1) for s in _skips]
+        skips = [np.repeat(s, repeats=400, axis=1) for s in _skips]
         print('SKIPS', skips[0].shape)
 
         grid_z_batched = np.repeat(np.expand_dims(grid_z, axis=0), repeats=bs, axis=0)
         grid_z_batched = np.repeat(grid_z_batched, repeats=154, axis=-1)  # --> ???????????????
+
         print('grid z', grid_z_batched.shape)
         # print('OUT', grid_z_batched, skips)
-        grid_pred = model_decoder.predict(x=[grid_z_batched, skips])
-
+        grid_pred = model_decoder.predict(x=[grid_z_batched, skips[0], skips[1], skips[2], skips[3]])
+        print('GRID PRED', grid_pred.shape)
         # --> THIS DOESNT INFLUENCE THE PLOTS
         report_loss_kl += np.sum(KL(mu, logvar))
         # report_loss_kl += model.KL(data).sum().item()
@@ -266,12 +266,17 @@ def calc_infer_mean(model, data):
     return mu
 
 
-def reparameterize(mu, logvar):
-    # epsilon = K.random_normal(shape=tf.shape(logvar), mean=0.0, stddev=1.0)
+def reparameterize(mu, logvar, z_samples=1):
+
+    std = np.exp(0.5 * logvar)
+
+    if z_samples > 1:
+        mu = np.repeat(np.expand_dims(mu, axis=1), z_samples, axis=1)
+        std = np.repeat(np.expand_dims(std, axis=1), z_samples, axis=1)
+
     epsilon = np.random.normal(size=np.shape(logvar), loc=0.0, scale=1.0)
 
-    # return mu + K.exp(0.5 * logvar) * epsilon
-    return mu + np.exp(0.5 * logvar) * epsilon
+    return mu + std * epsilon
 
 
 def calc_mi(mu, logvar):
@@ -280,32 +285,70 @@ def calc_mi(mu, logvar):
     Returns: Float
     """
     # [x_batch, nz]
+    z_batch = 1
 
     mu = np.mean(mu, axis=1)
     logvar = np.mean(logvar, axis=1)
 
     bs, nz = mu.shape
+    # print('MU SHAPE', mu.shape)  # correct shape
 
     # E_{q(z|x)}log(q(z|x)) = -0.5*nz*log(2*\pi) - 0.5*(1+logvar).sum(-1)
-    neg_entropy = (-0.5 * nz * math.log(2 * math.pi) - 0.5 * (1 + logvar).sum(-1)).mean()
+    neg_entropy = np.mean(-0.5 * nz * np.log(2 * np.pi) - 0.5 * np.sum(1 + logvar, axis=-1))
+    # print('NEG ENTROPY:', neg_entropy.shape)
+    # print('NEG ENTROPY:', neg_entropy)
 
     # [z_batch, nz]
-    z_samples = reparameterize(mu, logvar)
+    z_samples = reparameterize(mu, logvar, z_samples=z_batch)
+    # print('Z_SAMPLES', z_samples.shape)  # correct shape
 
     # [1, x_batch, nz]
     mu, logvar = np.expand_dims(mu, axis=0), np.expand_dims(logvar, axis=0)
     var = np.exp(logvar)
 
+    # print('MU', mu.shape)
+    # print('LOGVAR', logvar.shape)
+
     # (z_batch, x_batch, nz)
     dev = z_samples - mu
+    # print('DEV', dev.shape)
 
     # (z_batch, x_batch)
     # log_density = -0.5 * ((dev ** 2) / var).sum(dim=-1) - 0.5 * (nz * math.log(2 * math.pi) + logvar.sum(-1))
-    log_density = -0.5 * np.sum(np.square(dev) / var, axis=-1) - 0.5 * (nz * math.log(2 * math.pi) + np.sum(logvar, axis=-1))
+    log_density = -0.5 * np.sum(np.square(dev) / var, axis=-1) - 0.5 * (nz * np.log(2 * np.pi) + np.sum(logvar, axis=-1))
+    # print('LOG DENS', log_density.shape)
 
     # log q(z): aggregate posterior
     # [z_batch]
     log_qz = log_sum_exp(log_density, dim=1) - math.log(bs)
+    # print('LOG QZ', log_qz)
+
+    return neg_entropy - log_qz.mean(-1)
+
+
+def calc_mii(mu, logvar):
+    x_batch, nz = mu.size()
+
+    # E_{q(z|x)}log(q(z|x)) = -0.5*nz*log(2*\pi) - 0.5*(1+logvar).sum(-1)
+    neg_entropy = (-0.5 * nz * math.log(2 * math.pi) - 0.5 * (1 + logvar).sum(-1)).mean()
+
+    # [z_batch, 1, nz]
+    z_samples = reparameterize(mu, logvar, 1)
+
+    # [1, x_batch, nz]
+    mu, logvar = mu.unsqueeze(0), logvar.unsqueeze(0)
+    var = logvar.exp()
+
+    # (z_batch, x_batch, nz)
+    dev = z_samples - mu
+
+    # (z_batch, x_batch)
+    log_density = -0.5 * ((dev ** 2) / var).sum(dim=-1) - \
+        0.5 * (nz * math.log(2 * math.pi) + logvar.sum(-1))
+
+    # log q(z): aggregate posterior
+    # [z_batch]
+    log_qz = log_sum_exp(log_density, dim=1) - math.log(x_batch)
 
     return (neg_entropy - log_qz.mean(-1)).item()
 
@@ -340,8 +383,8 @@ def eval_log_model_posterior(prior, pred, data, grid_z, bs):
         Tensor: the log posterior distribution log p(z|x) with
                 shape [batch_size, K^2]
     """
-
-    # (batch_size, k^2, nz)
+    print('===== grid_z', grid_z.shape)
+    # (k^2, nz) -> (batch_size, k^2, nz)
     grid_z = np.repeat(np.expand_dims(grid_z, axis=0), bs, axis=0)
 
     # (batch_size, k^2)

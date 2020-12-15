@@ -62,7 +62,7 @@ def base_convlstm_layer(x, filters, kernel_size=4, strides=2, padding='same', ke
     return layer_output
 
 
-def image_encoder(image_shape, output_dim, time_distr=True, name=None, kernel_size=4, size=64, reg_lambda=0.0):
+def image_encoder(batch_shape, h_dim, time_distr=True, name=None, kernel_size=4, size=64, reg_lambda=0.0):
     """Add input options: kernel_size, filters, ...
     If the input is 64x64xchannels the output will be 1x1xlatent_dim
     image_shape: [batch_size, seq_len, w, h, c]. Seq len can be passed as None but in that case, if
@@ -71,14 +71,14 @@ def image_encoder(image_shape, output_dim, time_distr=True, name=None, kernel_si
     """
 
     names = [name + '_input', name + '_L_0'] if name else [None] * 2
-    _in = Input(batch_shape=image_shape, name=names[0])
+    _in = Input(batch_shape=batch_shape, name=names[0])
 
     h1 = base_conv_layer(_in, size,  strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
     h2 = base_conv_layer(h1, size*2, strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
     h3 = base_conv_layer(h2, size*4, strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
     h4 = base_conv_layer(h3, size*8, strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
 
-    h5 = base_conv_layer(h4, filters=output_dim, strides=1, padding='valid', activation='tanh',
+    h5 = base_conv_layer(h4, filters=h_dim, strides=1, padding='valid', activation='tanh',
                          kernel_size=4, time_distr=time_distr, reg_lambda=reg_lambda)
     h5 = Lambda(lambda x: tf.squeeze(tf.squeeze(x, axis=2), axis=2), name=names[1])(h5)
 
@@ -122,11 +122,12 @@ def image_decoder(batch_shape, name=None, time_distr=True, output_activation='si
     """Add input options: kernel_size, filters, ...
     """
 
+    bs, seq_len = int(batch_shape[0]), int(batch_shape[1])
     z = Input(batch_shape=batch_shape)
-    skip_0 = Input(shape=[None, 32, 32, skips_size])
-    skip_1 = Input(shape=[None, 16, 16, skips_size*2])
-    skip_2 = Input(shape=[None, 8, 8, skips_size*4])
-    skip_3 = Input(shape=[None, 4, 4, skips_size*8])
+    skip_0 = Input(batch_shape=[bs, seq_len, 32, 32, skips_size])
+    skip_1 = Input(batch_shape=[bs, seq_len, 16, 16, skips_size*2])
+    skip_2 = Input(batch_shape=[bs, seq_len, 8, 8, skips_size*4])
+    skip_3 = Input(batch_shape=[bs, seq_len, 4, 4, skips_size*8])
     concat = Lambda(lambda _x: tf.concat(_x, axis=-1))
 
     _in = Lambda(lambda x_: tf.expand_dims(tf.expand_dims(x_, axis=2), axis=2))(z)
@@ -232,7 +233,7 @@ def load_encoder(batch_shape, h_dim, model_name, ckpt_dir, filename,
     if load_model_state:
         E = load_model(weight_path)
     else:
-        E = image_encoder(image_shape=batch_shape, output_dim=h_dim, kernel_size=kernel_size,
+        E = image_encoder(batch_shape=batch_shape, h_dim=h_dim, kernel_size=kernel_size,
                           reg_lambda=reg_lambda, name=model_name)
         E.load_weights(weight_path)
 

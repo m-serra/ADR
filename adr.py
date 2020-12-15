@@ -17,6 +17,10 @@ from models.encoder_decoder import slice_skips
 from models.lstm import lstm_initial_state_zeros
 import tensorflow.python.keras.backend as K
 
+from tensorflow.keras.layers import BatchNormalization, Activation
+from tensorflow.keras.layers import TimeDistributed, Conv2D, ConvLSTM2D
+from tensorflow.keras.regularizers import l2
+
 
 def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a_layers=0, units=0, layers=0,
             random_window=False, lstm=False):
@@ -59,17 +63,21 @@ def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a
     return frame_inputs, action_state, initial_state_a, initial_state, ins
 
 
-def get_sub_model(name, batch_shape, h_dim, ckpt_dir, filename, trainable, load_model_state, load_flag, **kwargs):
+def get_sub_model(name, batch_shape, h_dim, ckpt_dir, filename, trainable, load_model_state, load_flag,
+                  model_name=None, **kwargs):
+
+    if model_name is None:
+        model_name = name
 
     f_inst = {'Ec': recurrent_image_encoder, 'A': action_net, 'rA': recurrent_action_net,
-              'La': lstm_gaussian, 'Da': image_decoder}
+              'La': lstm_gaussian, 'Da': image_decoder, 'Da2': image_decoder}
 
     f_load = {'Ec': load_recurrent_encoder, 'A': load_action_net, 'rA': load_recurrent_action_net,
-              'La': load_lstm, 'Da': load_decoder}
+              'La': load_lstm, 'Da': load_decoder, 'Da2': load_decoder}
 
     f = f_load.get(name) if load_flag else f_inst.get(name)
 
-    model = f(name=name, batch_shape=batch_shape, h_dim=h_dim, ckpt_dir=ckpt_dir, filename=filename,
+    model = f(name=model_name, batch_shape=batch_shape, h_dim=h_dim, ckpt_dir=ckpt_dir, filename=filename,
               trainable=trainable, load_model_state=load_model_state, **kwargs)
 
     return model
@@ -85,7 +93,47 @@ def freezeLayer(layer, unfreeze=False):
             freezeLayer(l, unfreeze)
 
 
-def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01, gaussian=False, kl_weight=None,
+def base_layer(x, filters, kernel_size=5, strides=2, activation='relu', kernel_initializer='he_uniform',
+               recurrent=False, convolutional=True, reg_lambda=0.00):
+
+    assert convolutional or recurrent, "At least one of 'convolutional' and 'recurrent' must be True"
+
+    if convolutional is True:
+        x = TimeDistributed(Conv2D(filters=filters, kernel_size=kernel_size, strides=strides, padding='same',
+                                   kernel_regularizer=l2(reg_lambda), kernel_initializer=kernel_initializer))(x)
+    if recurrent is True:
+        x = ConvLSTM2D(filters=filters, kernel_size=kernel_size, return_sequences=True, padding='same',
+                       activation=None, kernel_regularizer=l2(reg_lambda), kernel_initializer=kernel_initializer)(x)
+
+    bn = BatchNormalization()(x)
+    layer_output = Activation(activation)(bn)
+
+    return layer_output
+
+
+def action_inference_model(input_sequence):
+
+    ins = Input(tensor=input_sequence)
+
+    encoder = base_layer(ins, filters=128, strides=2)
+
+    encoder = base_layer(encoder, filters=64, strides=2)
+    encoder = base_layer(encoder, filters=64, strides=2)
+    encoder = base_layer(encoder, filters=32, strides=1)
+    encoder = base_layer(encoder, filters=16, strides=2)
+    encoder = base_layer(encoder, filters=8, strides=1)
+    encoder = base_layer(encoder, filters=4, strides=2)
+
+    actions = TimeDistributed(Conv2D(filters=3, kernel_size=5, strides=2, padding='same', activation='linear',
+                                     kernel_initializer='he_uniform'))(encoder)
+    actions = Lambda(lambda x: tf.squeeze(x))(actions)
+
+    model = Model(inputs=ins, outputs=actions)
+
+    return model
+
+
+def adr_ao(frames, actions, states, context_frames, Ec, A, D, C, learning_rate=0.01, gaussian=False, kl_weight=None,
            L=None, use_seq_len=12, lstm_units=None, lstm_layers=None, training=True, reconstruct_random_frame=False,
            random_window=True):
 
@@ -136,6 +184,8 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
 
     x_recovered = D([hc_ha, skips])
 
+    inf_actions = C(x_recovered)
+
     rec_loss = mean_squared_error(x_to_recover, x_recovered)
     sim_loss = mean_squared_error(hc_0, hc_1)
 
@@ -155,7 +205,7 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
     E.compile(optimizer=Adam(lr=learning_rate))
 
     # == Full model
-    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar, skips])
+    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar, hc_ha, skips])
     ED.add_metric(rec_loss, name='rec_loss', aggregation='mean')
     ED.add_metric(sim_loss, name='sim_loss', aggregation='mean')
 
@@ -172,10 +222,10 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01
 
     h_placeholder = Input(batch_shape=hc_ha.shape)
     skips_placeholder = [Input(batch_shape=s.shape) for s in skips]
-    print('IN', h_placeholder, skips_placeholder)
+
     x_recovered = D([h_placeholder, skips_placeholder])
     d = Model(inputs=[h_placeholder, skips_placeholder], outputs=x_recovered)
-    d.compile(optimizer=Adam(lr=learning_rate))
+    d.compile(optimizer=Adam(lr=learning_rate), loss=mean_squared_error)
 
     return ED, E, d
 

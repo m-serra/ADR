@@ -7,7 +7,7 @@ from utils.clr import CyclicLR
 from utils.utils import get_data, ModelCheckpoint, print_loss, save_gifs
 from tensorflow.python.keras.optimizers import Adam
 import matplotlib.pyplot as plt
-from utils.utils import generate_grid, plot_multiple
+from utils.utils import generate_grid, plot_multiple, calc_mi
 from tensorflow.python.keras.regularizers import l2
 import tensorflow.python.keras.backend as K
 
@@ -23,7 +23,7 @@ best_val_epoch = 0
 
 def main():
 
-    bs = 32
+    bs = 32  # --> !!!!
     seq_len = 30
     shuffle = True
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
@@ -36,7 +36,7 @@ def main():
     _, _, _, val_steps, val_iterator = get_data(dataset='bair', mode='val', batch_size=bs, shuffle=False,
                                                 dataset_dir=dataset_dir, sequence_length_test=seq_len)
 
-    gpu_options = tf.GPUOptions(visible_device_list='0')
+    gpu_options = tf.GPUOptions(visible_device_list='1')
     config = tf.ConfigProto(gpu_options=gpu_options)
 
     hist = train_adr_ao(frames,
@@ -64,7 +64,7 @@ def main():
                         epochs=500000,
                         steps=steps,
                         learning_rate=4e-5,
-                        ckpt_dir=os.path.join('/home/mandre/adr/trained_models/bair/'),
+                        ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/trained_models/bair/'),
                         val_steps=1,  # val_steps,  --> !!!
                         ckpt_criteria='train_rec',  # 'val_rec',
                         ec_filename='Ec_a_test.h5',
@@ -126,6 +126,10 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
                       filename=d_load_name, trainable=True, load_model_state=continue_training,
                       load_flag=continue_training, reg_lambda=reg_lambda, output_regularizer=output_regularizer)
 
+    # D2 = get_sub_model(name='Da2', batch_shape=[bs, use_seq_len, hc_dim], h_dim=None,
+    #                    ckpt_dir=ckpt_dir, filename='D2.h5', trainable=True, load_model_state=continue_training,
+    #                    load_flag=continue_training, reg_lambda=reg_lambda, output_regularizer=output_regularizer)
+
     A = get_sub_model(name=a_name, batch_shape=[bs, seq_len, a_dim + s_dim], h_dim=ha_dim, ckpt_dir=ckpt_dir,
                       filename=a_load_name, trainable=True, load_model_state=continue_training,
                       load_flag=continue_training, units=a_units, dense_lambda=reg_lambda,
@@ -138,18 +142,20 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
 
     ckpt_models = [Ec, D, A]
     filenames = [ec_filename, d_filename, a_filename]
+    sess.run(train_iterator.initializer)
 
     if gaussian:
         ckpt_models.append(L)
         filenames.append(l_filename)
 
-    ED, E, D = adr_ao(frames,
+    ED, E, d = adr_ao(frames,
                       actions,
                       states,
                       context_frames,
                       Ec=Ec,
                       A=A,
                       D=D,
+                      D2=None,
                       use_seq_len=use_seq_len,
                       learning_rate=learning_rate,
                       gaussian=gaussian,
@@ -171,13 +177,15 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
     #     clbks.append(CyclicLR(ED, base_lr, max_lr, step_size=half_cycle * steps))
 
     aggressive_flag = False  # --> !!!
-    aggressive_cycles = 10  # the average cycles according to the paper. Implement stopping condition later
+    aggressive_cycles = 2  # the average cycles according to the paper. Implement stopping condition later
     iter_ = 0
-    zmin, zmax, dz = -20, 20, 0.01  #  check why they were using these numbers
+    zmin, zmax, dz = -20, 20, 0.1  #  check why they were using these numbers
+    pre_mi = best_mi = mi_not_improved = 0
     grid_z = generate_grid(zmin, zmax, dz, ndim=1)
 
     sess.run(train_iterator.initializer)
-    plot_data = sess.run(frames)
+
+    # plot_data = sess.run(frames)
 
     for e in range(epochs):
         print('\n Epoch', str(e + 1) + '/' + str(epochs))
@@ -196,7 +204,7 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
 
             if aggressive_flag and encoder_only_flag:  # sub_iter < 100:
 
-                print('aggressive encoder')
+                # print('aggressive encoder')
                 aggressive_loss = E.train_on_batch(x=None)
 
                 rec_loss = aggressive_loss[1]
@@ -204,12 +212,17 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
                 num_examples += bs
                 curr_loss += (rec_loss + kl_weight * kl_loss)
 
-                if s % 10 == 0:
+                if s % 4 == 0:  # --> before was 10
                     curr_loss = curr_loss / num_examples
                     if prev_loss - curr_loss < 0:
                         encoder_only_flag = False  # break
                     prev_loss = curr_loss
                     curr_loss = num_examples = 0
+            elif aggressive_flag:
+                # print('decoder')
+                encoder_only_flag = True
+                _, gt, _, _, h, skips_0, skips_1, skips_2, skips_3 = ED.predict(x=None, steps=1)
+                _ = d.train_on_batch(x=[h, skips_0, skips_1, skips_2, skips_3], y=gt)
             else:
                 # print('normal')
                 loss = ED.train_on_batch(x=None)
@@ -221,16 +234,16 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
         train_loss = np.divide(train_loss, ed_iter)
         print_loss(train_loss, loss_names=ED.metrics_names, title='Train')
 
-        save_gifs_flag = False  # --> !!!
-        save_kl_flag = False
+        save_gifs_flag = True  # --> !!!
+        save_kl_flag = True
 
         if e % 25 == 0 and (save_gifs_flag or save_kl_flag):
 
-            x, imgs, mu, logvar, _ = ED.predict(x=None, steps=1)
+            x, imgs, mu, logvar, _, _, _, _, _ = ED.predict(x=None, steps=1)
 
             if save_gifs_flag is True:
-                save_gifs(sequence=np.clip(x[:bs], a_min=0.0, a_max=1.0), name='pred_a_not_agg',
-                          save_dir=os.path.join('/home/mandre/adr/gifs'))
+                save_gifs(sequence=np.clip(x[:bs], a_min=0.0, a_max=1.0), name='pred_a_agg',
+                          save_dir=os.path.join(os.path.expanduser('~/'), 'adr/gifs'))
 
             def KLD(_mu, _logvar):
                 return -0.5 * np.mean(1 + _logvar - np.power(_mu, 2) - np.exp(_logvar), axis=0, keepdims=True)
@@ -238,9 +251,9 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
             if save_kl_flag:
                 _KLD = KLD(mu, logvar)
                 _KLD /= 2.0
-                plt.figure()
+                # plt.figure()
                 plt.bar(np.arange(z_dim), np.mean(_KLD.squeeze(), axis=0))
-                plt.savefig('/home/mandre/adr/gifs/kld_not_aggressive2.png')  # --> !!!
+                plt.savefig(os.path.join(os.path.expanduser('~/'), 'adr/gifs/kld_aggressive.png'))  # --> !!!
 
         # ===== Validation loop
         # for _ in range(val_steps):
@@ -253,25 +266,11 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
         # if save_gifs_flag:  # --> DELETE THIS
         model_ckpt.on_epoch_end(epoch=e, logs={'rec_loss': train_loss[1], 'val_rec_loss': 0.0})
 
-        plot_multiple(model=ED, model_decoder=D, plot_data=plot_data, grid_z=grid_z, iter_=iter_, ckpt_dir=ckpt_dir,
-                      nz=z_dim, aggressive=aggressive_flag)
+        # plot_multiple(model=ED, model_decoder=D, bs=bs, grid_z=grid_z, iter_=iter_, ckpt_dir=ckpt_dir,
+        #               nz=z_dim, aggressive=aggressive_flag)
 
-        if e >= aggressive_cycles - 1:
-            aggressive_flag = False
+        # if e >= aggressive_cycles - 1:
+        #     aggressive_flag = False
 
-    return 2
-
-    # ED.fit(x=None,
-    #        batch_size=bs,
-    #        epochs=epochs,
-    #        steps_per_epoch=steps,
-    #        callbacks=clbks,
-    #        validation_data=val_iterator,
-    #        validation_steps=val_steps,
-    #        verbose=2)
-
-    # return ED.history
-
-
-if __name__ == '__main__':
-    main()
+        if aggressive_flag:
+            # cur_mi = calc_mi(vae, v
