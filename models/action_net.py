@@ -41,7 +41,7 @@ def action_net(batch_shape, units, h_dim, name='A',  **kwargs):
 
 def recurrent_action_net(batch_shape, units, h_dim, name='A', initializer='he_uniform',
                          output_initializer='glorot_uniform', dense_lambda=0.0,
-                         recurrent_lambda=0.0):
+                         recurrent_lambda=0.0, **kwargs):
 
     """
     seq_len can be passed as None if the length of the sequence is not known but then Sample won't work as
@@ -77,8 +77,9 @@ def load_action_net(batch_shape, units, h_dim, ckpt_dir, filename, trainable=Fal
 
     if load_model_state:
         A = load_model(weight_path)
+        A._name = name
     else:
-        A = action_net(batch_shape=batch_shape, units=units, ha_dim=h_dim, name=name)
+        A = action_net(batch_shape=batch_shape, units=units, h_dim=h_dim, name=name)
         A.load_weights(weight_path)
 
     if trainable is False:
@@ -92,8 +93,9 @@ def load_recurrent_action_net(batch_shape, units, h_dim, ckpt_dir, filename, tra
 
     if load_model_state:
         A = load_model(weight_path)
+        A._name = name
     else:
-        A = recurrent_action_net(batch_shape=batch_shape, units=units, ha_dim=h_dim, name=name)
+        A = recurrent_action_net(batch_shape=batch_shape, units=units, h_dim=h_dim, name=name)
         A.load_weights(weight_path)
 
     if trainable is False:

@@ -54,14 +54,14 @@ def simple_lstm(batch_shape, h_dim=10, n_layers=2, units=256, name=None, reg_lam
     # ===== Define the lstm model
     lstm_cells = [make_cell(units) for _ in range(n_layers)]
     lstm = RNN(lstm_cells, return_sequences=True, return_state=True)
-    embed_net = Dense(units=units, activation='linear', use_bias=False)  # --> !!!
+    embed_net = Dense(units=units, activation='linear')
     output_net = Dense(units=h_dim, activation='tanh')
 
     _in = Input(batch_shape=[batch_shape[0], None, batch_shape[-1]])
     initial_state = initial_state_placeholder(units, n_layers, batch_size=batch_shape[0])
 
     embed = TimeDistributed(embed_net)(_in)
-    embed = BatchNormalization()(embed)  # --> !!!!!!
+    # embed = BatchNormalization()(embed)  # --> !!!!!!
     out = lstm(embed, initial_state=initial_state)
     predictions, state = out[0], out[1:]
     predictions = TimeDistributed(output_net)(predictions)
@@ -104,6 +104,7 @@ def load_lstm(batch_shape, h_dim, lstm_units, n_layers, ckpt_dir, filename,
         # this only allows output dim to be the predefined value
         custom_objects = {'Sample': Sample} if lstm_type == 'gaussian' else None
         lstm = load_model(weight_path, custom_objects=custom_objects)
+        lstm._name = name
     else:
         assert lstm_type in ['simple', 'gaussian'], 'Argument lstm_type must be \'simple\' or \'gaussian\''
 

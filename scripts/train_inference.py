@@ -1,20 +1,26 @@
 import os
+import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 from keras.losses import mean_absolute_error
 from adr import action_inference_model
 from utils.utils import get_data
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+import tensorflow.python.keras.backend as K
+
 
 
 def main():
 
-    epochs = 100
+    epochs = 10000
     shuffle = True
     bs = 32
     seq_len = 30
     shuffle = True
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
     save_path = os.path.join(os.path.expanduser('~/'), 'adr/trained_models/bair/')
+
+    gpu_options = tf.GPUOptions(visible_device_list='1')
+    config = tf.ConfigProto(gpu_options=gpu_options)
 
     frames, _, states, steps, train_iterator = get_data(dataset='bair', mode='train', batch_size=bs,
                                                         shuffle=shuffle, dataset_dir=dataset_dir,
@@ -24,12 +30,15 @@ def main():
                                                                   shuffle=False, dataset_dir=dataset_dir,
                                                                   sequence_length_test=seq_len)
 
+    sess = tf.Session(config=config)
+    K.set_session(sess)
+
     history = train_inference_model(frames, states, val_frames, val_states, epochs, steps, val_steps, save_path)
 
 
 def train_inference_model(frames, states, val_frames, val_states, epochs, steps, val_steps, save_path):
 
-    C = action_inference_model(frames)
+    C = action_inference_model(frames, return_hidden=False)
 
     C.compile(optimizer=Adam(),
               loss=mean_absolute_error,

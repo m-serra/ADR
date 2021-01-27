@@ -1,5 +1,6 @@
 import os
 import tensorflow as tf
+
 from utils.utils import get_data
 from adr import adr_ao
 from models.lstm import load_lstm
@@ -9,6 +10,7 @@ from models.action_net import load_action_net
 from models.action_net import load_recurrent_action_net
 import tensorflow.python.keras.backend as K
 import matplotlib.pyplot as plt
+from tensorflow.python.keras.optimizers import Adam
 import numpy as np
 from utils.utils import save_gifs
 
@@ -16,21 +18,28 @@ from utils.utils import save_gifs
 def main():
 
     bs = 32
+    use_seq_len = 12
     seq_len = 30
-    mode = 'train'
+    mode = 'val'  # --> !!!
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
-    ckpt_dir = os.path.join('/home/mandre/adr/trained_models/bair')
+    ckpt_dir = os.path.join('/home/mandre/adr/trained_models/bair/random_window')
 
-    frames, actions, states, steps, _ = get_data(dataset='bair', mode=mode, batch_size=bs, shuffle=False,
-                                                 dataset_dir=dataset_dir, sequence_length_train=seq_len,
-                                                 sequence_length_test=seq_len)
+    frames, actions, states, steps, iterator = get_data(dataset='bair', mode=mode, batch_size=bs, shuffle=False,
+                                                        dataset_dir=dataset_dir, sequence_length_train=seq_len,
+                                                        sequence_length_test=seq_len)
 
-    gpu_options = tf.GPUOptions(visible_device_list='0')
+    _, _, _, val_steps, val_iterator = get_data(dataset='bair', mode='val', batch_size=bs, shuffle=False,
+                                                dataset_dir=dataset_dir, sequence_length_train=seq_len,
+                                                sequence_length_test=seq_len)
+
+    gpu_options = tf.GPUOptions(visible_device_list='1')
     config = tf.ConfigProto(gpu_options=gpu_options)
 
     evaluate_autoencoder_A(frames,
                            actions,
                            states,
+                           use_seq_len=use_seq_len,
+                           iterator=val_iterator,
                            ckpt_dir=ckpt_dir,
                            context_frames=2,
                            gaussian=True,
@@ -41,23 +50,24 @@ def main():
                            lstm_units=256,
                            lstm_layers=1,
                            steps=steps,
-                           ec_filename='Ec_a_test_agg.h5',
-                           d_filename='D_a_test_agg.h5',
-                           a_filename='A_a_test_agg.h5',
-                           l_filename='L_a_test_agg.h5',
+                           val_steps=val_steps,
+                           ec_filename='Ec_a_t00243_v0023_tf10tv2.h5',
+                           a_filename='A_a_t00243_v0023_tf10tv2.h5',
+                           d_filename='D_a_t00243_v0023_tf10tv2.h5',
+                           l_filename='L_a_t00243_v0023_tf10tv2.h5',
                            set_states=False,
                            config=config,
                            evaluate=True,
-                           predict=True,
-                           random_window=False,
-                           eval_kld=True)
+                           predict=False,
+                           random_window=True,
+                           eval_kld=False)
 
 
-def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_frames=5, gaussian=False,
-                           hc_dim=128, ha_dim=16, z_dim=10, units=256, config=None, steps=None,
+def evaluate_autoencoder_A(frames, actions, states=None, iterator=None, ckpt_dir=None, context_frames=5, gaussian=False,
+                           hc_dim=128, ha_dim=16, z_dim=10, units=256, config=None, steps=None, val_steps=None,
                            lstm_units=256, lstm_layers=1, ec_filename='Ec.h5', d_filename='Da.h5',
                            a_filename='A.h5', l_filename='L.h5', set_states=False, evaluate=False, predict=True,
-                           random_window=False, eval_kld=False):
+                           random_window=False, eval_kld=False, use_seq_len=12):
 
     bs, seq_len, w, h, c = [int(s) for s in frames.shape]
     a_dim = int(actions.shape[-1]) if actions is not None else 0
@@ -70,19 +80,19 @@ def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_
     K.set_session(sess)
 
     Ec = load_recurrent_encoder([bs, context_frames, w, h, c], h_dim=hc_dim, ckpt_dir=ckpt_dir, filename=ec_filename,
-                                trainable=False, load_model_state=False)
-    D = load_decoder(h_dim=hc_dim+ha_dim+z_dim, model_name='D', ckpt_dir=ckpt_dir, filename=d_filename,
-                     output_activation='sigmoid', trainable=False, load_model_state=False)
+                                trainable=True, load_model_state=False)
+    D = load_decoder(batch_shape=[bs, seq_len, hc_dim+ha_dim+z_dim], model_name='D', ckpt_dir=ckpt_dir,
+                     filename=d_filename, output_activation='sigmoid', trainable=True, load_model_state=False)
     if not gaussian:
         L = None
         A = load_recurrent_action_net([bs, seq_len-context_frames, a_dim+s_dim], units, ha_dim, ckpt_dir,
-                                      filename=a_filename, trainable=False, load_model_state=False)
+                                      filename=a_filename, trainable=True, load_model_state=False)
     else:
-        A = load_action_net(batch_shape=[bs, seq_len, a_dim+s_dim], units=units, ha_dim=ha_dim,
-                            ckpt_dir=ckpt_dir, filename=a_filename, trainable=False, load_model_state=False)
-        L = load_lstm(batch_shape=[bs, seq_len, hc_dim+ha_dim], output_dim=z_dim, lstm_units=lstm_units,
+        A = load_action_net(batch_shape=[bs, seq_len, a_dim+s_dim], units=units, h_dim=ha_dim,
+                            ckpt_dir=ckpt_dir, filename=a_filename, trainable=True, load_model_state=False)
+        L = load_lstm(batch_shape=[bs, seq_len, hc_dim+ha_dim], h_dim=z_dim, lstm_units=lstm_units,
                       n_layers=lstm_layers, ckpt_dir=ckpt_dir, filename=l_filename, lstm_type='gaussian',
-                      load_model_state=False)
+                      trainable=True, load_model_state=False)
     if set_states:
         states = K.variable([[[0.525, -0.175, 0.2], [0.5666, -0.1333, 0.2],   [0.60833, -0.09166, 0.2],
                             [0.65, -0.05, 0.2],   [0.69166, -0.00833, 0.2], [0.7333, 0.03333, 0.2],
@@ -102,6 +112,7 @@ def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_
                    A=A,
                    D=D,
                    L=L,
+                   use_seq_len=use_seq_len,
                    learning_rate=0.0,
                    gaussian=gaussian,
                    kl_weight=0.0,
@@ -111,23 +122,16 @@ def evaluate_autoencoder_A(frames, actions, states=None, ckpt_dir=None, context_
                    random_window=random_window)
 
     if evaluate:
-        model.evaluate(x=None, steps=steps)
+        model.compile(optimizer=Adam(lr=0.0))
+        model.fit(x=None, epochs=1, steps_per_epoch=steps, validation_data=iterator, validation_steps=val_steps)
+        model.evaluate(x=iterator, steps=steps)
 
     if predict:
         x, imgs, mu, logvar = model.predict(x=None, steps=steps)
-
-        if eval_kld:
-            def KLD(_mu, _logvar):
-                return -0.5 * np.mean(1 + _logvar - np.power(_mu, 2) - np.exp(_logvar), axis=0, keepdims=True)
-            _KLD = KLD(mu, logvar)
-            _KLD /= 2.0
-            print(np.arange(z_dim).shape)
-            print(_KLD.squeeze().shape)
-            plt.bar(np.arange(z_dim), np.mean(_KLD.squeeze(), axis=0))
-            plt.savefig('/home/mandre/adr/gifs/kld_aggressive.png')
-        save_gifs(sequence=np.clip(x[:bs], a_min=0.0, a_max=1.0), name='pred_a', save_dir=os.path.join('/home/mandre/adr/gifs'))
-        save_gifs(sequence=np.clip(imgs[:bs], a_min=0.0, a_max=1.0), name='gt', save_dir=os.path.join('/home/mandre/adr/gifs'))
-        return x, imgs
+        print(np.mean(np.square(x-imgs)))
+        save_gifs(sequence=np.clip(x, a_min=0.0, a_max=1.0), name='adr_ao',
+                  save_dir=os.path.join(os.path.expanduser('~/'), 'adr/gifs'))
+        # return x, imgs
     return None, None
 
 

@@ -6,10 +6,11 @@ from models.encoder_decoder import image_decoder
 from models.encoder_decoder import load_encoder
 from models.encoder_decoder import load_decoder
 from models.encoder_decoder import load_recurrent_encoder
+from models.resnet18 import resnet18
 from models.action_net import load_action_net, load_recurrent_action_net
 from models.lstm import load_lstm
 from utils.clr import CyclicLR
-from utils.utils import get_data, ModelCheckpoint
+from utils.utils import get_data, ModelCheckpoint, NeptuneCallback
 from adr import adr
 import tensorflow.python.keras.backend as K
 
@@ -51,24 +52,22 @@ def main():
                      use_seq_len=12,
                      epochs=10000,
                      steps=steps,
-                     continue_training=False,
-                     clr_flag=True,
+                     continue_training=False,  # --> !!!
+                     clr_flag=False,
                      base_lr=6e-5,
                      max_lr=4e-4,
                      half_cycle=4,
                      learning_rate=4e-5,
                      action_net_units=256,
                      val_iterator=val_iterator,
-                     val_steps=val_steps,
+                     val_steps=1,  # val_steps,
                      reg_lambda=0.0,
                      output_regularizer=None,
                      lstm_units=256,
                      lstm_layers=1,
-                     neptune_log=False,
-                     neptune_ckpt=False,
                      save_dir='/home/mandre/adr/trained_models/bair',
-                     ckpt_dir='/home/mandre/adr/trained_models/bair/random_window2',
-                     ckpt_criteria='val_rec',
+                     ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/trained_models/bair/random_window'),
+                     ckpt_criteria='train_rec',
                      config=config,
                      ec_filename='Ec_o.h5',
                      a_filename='A_o.h5',
@@ -76,15 +75,18 @@ def main():
                      do_filename='D_o.h5',
                      la_filename='La_o.h5',
                      da_filename='Da_o.h5',
-                     ec_load_name='Ec_a_t003693856_v0032159444.h5',
-                     a_load_name='A_a_t003693856_v0032159444.h5',
-                     da_load_name='D_a_t003693856_v0032159444.h5',
-                     la_load_name='L_a_t003693856_v0032159444.h5',
-                     do_load_name='',  # only needed if continue_training = True
-                     eo_load_name='',
+                     a_load_name='A_a_random_window_t0023550228_v00234065.h5',
+                     da_load_name='D_a_random_window_t0023550228_v00234065.h5',
+                     la_load_name='L_a_random_window_t0023550228_v00234065.h5',
+                     ec_load_name='Ec_a_random_window_t0023550228_v00234065.h5',
+                     do_load_name='D_o.h5',  # only needed if continue_training = True
+                     eo_load_name='Eo.h5',
                      keep_all=False,
                      random_window=True,
-                     reconstruct_random_frame=False)
+                     reconstruct_random_frame=False,
+                     neptune_log=True,
+                     neptune_ckpt=False,
+                     save_model=True)
 
 
 def train_adr(frames, actions, states, hc_dim, ha_dim, ho_dim, za_dim=10, gaussian_a=False, context_frames=2, epochs=1,
@@ -95,7 +97,7 @@ def train_adr(frames, actions, states, hc_dim, ha_dim, ho_dim, za_dim=10, gaussi
               do_filename='D_o.h5', la_filename='La_o.h5', da_filename='Da_o.h5', ec_load_name='Ec_a.h5',
               a_load_name='A_a.h5', da_load_name='D_a.h5', la_load_name='La.h5', continue_training=False,
               do_load_name='D_o.h5', eo_load_name='Eo.h5', random_window=True, keep_all=False,
-              reconstruct_random_frame=False):
+              reconstruct_random_frame=False, save_model=True):
 
     if not os.path.isdir(ckpt_dir):
         os.makedirs(ckpt_dir, exist_ok=True)
@@ -105,44 +107,43 @@ def train_adr(frames, actions, states, hc_dim, ha_dim, ho_dim, za_dim=10, gaussi
     s_dim = 0 if states is None else states.shape[-1]
     za_dim = za_dim if gaussian_a else 0
     La = None
+    clbks = []
 
     sess = tf.Session(config=config)
     sess.run(tf.global_variables_initializer())
     K.set_session(sess)
 
-    if neptune_log or neptune_ckpt:
-        neptune.init('m-serra/stochastic-objects')
-        neptune.create_experiment(name='train_o stochastic')
-
     # == Instance and load the models
     Ec = load_recurrent_encoder([bs, context_frames, w, h, c], h_dim=hc_dim, ckpt_dir=ckpt_dir,
                                 filename=ec_load_name, trainable=False, load_model_state=True)
-    Da = load_decoder(h_dim=hc_dim + ha_dim + za_dim, model_name='Da', ckpt_dir=ckpt_dir, output_channels=3,
-                      filename=da_load_name, output_activation='sigmoid', trainable=False, load_model_state=True)
+    Da = load_decoder(batch_shape=[bs, seq_len, hc_dim + ha_dim + za_dim], model_name='Da', ckpt_dir=ckpt_dir,
+                      output_channels=3, filename=da_load_name, output_activation='sigmoid', trainable=False,
+                      load_model_state=True)
 
     if continue_training:
         Eo = load_encoder(batch_shape=[bs, seq_len, w, h, 2 * c], h_dim=ho_dim, model_name='Eo', ckpt_dir=ckpt_dir,
                           filename=eo_load_name, trainable=True, load_model_state=True)
-        Do = load_decoder(h_dim=hc_dim + ha_dim + ho_dim, model_name='Do', ckpt_dir=ckpt_dir,
+        Do = load_decoder(batch_shape=[bs, seq_len, hc_dim + ha_dim + ho_dim], model_name='Do', ckpt_dir=ckpt_dir,
                           output_channels=6, filename=do_load_name, output_activation='sigmoid', trainable=True,
                           load_model_state=True)
     else:
-        Do = image_decoder(h_dim=hc_dim+ho_dim+ha_dim, output_activation='sigmoid', output_channels=6,
-                           name='D_o', reg_lambda=reg_lambda, output_initializer='glorot_uniform',
+        Do = image_decoder(batch_shape=[bs, seq_len, hc_dim+ho_dim+ha_dim], output_activation='sigmoid',
+                           output_channels=6, name='D_o', reg_lambda=reg_lambda, output_initializer='glorot_uniform',
                            output_regularizer=output_regularizer)
-        Eo = image_encoder(image_shape=[bs, 1, w, h, c*2], output_dim=ho_dim, name='Eo', reg_lambda=reg_lambda)
+        Eo = image_encoder(batch_shape=[bs, seq_len, w, h, c*2], h_dim=ho_dim, name='Eo', reg_lambda=reg_lambda)
+        # Eo = resnet18(batch_shape=[bs, seq_len, w, h, 2 * c], h_dim=ho_dim, name='Eo')
 
     if gaussian_a:
-        A = load_action_net(batch_shape=[bs, seq_len, a_dim + s_dim], units=action_net_units, ha_dim=ha_dim,
+        A = load_action_net(batch_shape=[bs, seq_len, a_dim + s_dim], units=action_net_units, h_dim=ha_dim,
                             ckpt_dir=ckpt_dir, filename=a_load_name, trainable=False, load_model_state=True)
-        La = load_lstm(batch_shape=[bs, seq_len, hc_dim + ha_dim], output_dim=za_dim,
+        La = load_lstm(batch_shape=[bs, seq_len, hc_dim + ha_dim], h_dim=za_dim,
                        lstm_units=lstm_units, n_layers=lstm_layers, ckpt_dir=ckpt_dir, filename=la_load_name,
                        lstm_type='gaussian', trainable=False, load_model_state=False)  # --> !!!
     else:
         A = load_recurrent_action_net([bs, seq_len, a_dim + s_dim], action_net_units, ha_dim, ckpt_dir=ckpt_dir,
                                       filename=a_load_name, trainable=False, load_model_state=True)
 
-    ckpt_models = [Ec, Eo, Da, Do,  A]
+    ckpt_models = [Ec, Eo, Da, Do, A]
     filenames = [ec_filename, eo_filename, da_filename, do_filename, a_filename]
     if gaussian_a:
         ckpt_models.append(La)
@@ -152,8 +153,12 @@ def train_adr(frames, actions, states, hc_dim, ha_dim, ho_dim, za_dim=10, gaussi
                     use_seq_len=use_seq_len, gaussian_a=gaussian_a, lstm_units=lstm_units, learning_rate=learning_rate,
                     random_window=random_window, reconstruct_random_frame=reconstruct_random_frame)
 
-    clbks = [ModelCheckpoint(models=ckpt_models, criteria=ckpt_criteria, ckpt_dir=save_dir, filenames=filenames,
-                             neptune_ckpt=neptune_ckpt, keep_all=keep_all)]
+    if neptune_log or neptune_ckpt:
+        clbks.append(NeptuneCallback(user='m-serra', project_name='adr', log=neptune_log, ckpt=neptune_ckpt))
+
+    if save_model:
+        clbks.append(ModelCheckpoint(models=ckpt_models, criteria=ckpt_criteria, ckpt_dir=save_dir, filenames=filenames,
+                                     neptune_ckpt=neptune_ckpt, keep_all=keep_all))
     if clr_flag:
         clbks.append(CyclicLR(adr_model, base_lr, max_lr, step_size=half_cycle * steps))
 

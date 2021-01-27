@@ -14,6 +14,7 @@ from tensorflow.python.keras.layers import LayerNormalization
 from tensorflow.python.keras.models import load_model
 from tensorflow.python.keras.regularizers import l2
 from models.lstm import Sample
+import tensorflow.python.keras.backend as K
 
 
 def base_conv_layer(x, filters, time_distr, kernel_size=4, strides=2, activation=None, use_bias=False,
@@ -62,7 +63,8 @@ def base_convlstm_layer(x, filters, kernel_size=4, strides=2, padding='same', ke
     return layer_output
 
 
-def image_encoder(batch_shape, h_dim, time_distr=True, name=None, kernel_size=4, size=64, reg_lambda=0.0):
+def image_encoder(batch_shape, h_dim, time_distr=True, name=None, kernel_size=4, size=64, reg_lambda=0.0,
+                  activation='tanh'):
     """Add input options: kernel_size, filters, ...
     If the input is 64x64xchannels the output will be 1x1xlatent_dim
     image_shape: [batch_size, seq_len, w, h, c]. Seq len can be passed as None but in that case, if
@@ -78,7 +80,7 @@ def image_encoder(batch_shape, h_dim, time_distr=True, name=None, kernel_size=4,
     h3 = base_conv_layer(h2, size*4, strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
     h4 = base_conv_layer(h3, size*8, strides=2, kernel_size=kernel_size, time_distr=time_distr, reg_lambda=reg_lambda)
 
-    h5 = base_conv_layer(h4, filters=h_dim, strides=1, padding='valid', activation='tanh',
+    h5 = base_conv_layer(h4, filters=h_dim, strides=1, padding='valid', activation=activation,
                          kernel_size=4, time_distr=time_distr, reg_lambda=reg_lambda)
     h5 = Lambda(lambda x: tf.squeeze(tf.squeeze(x, axis=2), axis=2), name=names[1])(h5)
 
@@ -132,7 +134,7 @@ def image_decoder(batch_shape, name=None, time_distr=True, output_activation='si
 
     _in = Lambda(lambda x_: tf.expand_dims(tf.expand_dims(x_, axis=2), axis=2))(z)
     h1 = base_conv_transpose_layer(_in, filters=size*8, strides=1, padding='valid', time_distr=time_distr,
-                                   kernel_size=4, kernel_initializer=initializer, reg_lambda=reg_lambda)
+                                   kernel_size=kernel_size, kernel_initializer=initializer, reg_lambda=reg_lambda)
 
     _in = concat([h1, skip_3])
     h2 = base_conv_transpose_layer(_in, filters=size*4, strides=2, kernel_size=kernel_size, time_distr=time_distr,
@@ -152,6 +154,16 @@ def image_decoder(batch_shape, name=None, time_distr=True, output_activation='si
 
     _in = concat([h4, skip_0])
     x = TimeDistributed(out_conv)(_in) if time_distr is True else out_conv(_in)
+
+    # _in = concat([h4, skip_0])
+    # h5 = base_conv_transpose_layer(_in, filters=size, strides=2, kernel_size=kernel_size, time_distr=time_distr,
+    #                                reg_lambda=reg_lambda, kernel_initializer=initializer)
+
+    # out_conv = Conv2DTranspose(filters=output_channels, kernel_size=kernel_size, strides=1, padding='same',
+    #                            activation=output_activation, kernel_initializer=output_initializer,
+    #                            activity_regularizer=output_regularizer)
+
+    # x = TimeDistributed(out_conv)(h5) if time_distr is True else out_conv(h5)
 
     decoder = Model(inputs=[z, [skip_0, skip_1, skip_2, skip_3]], outputs=x, name=name)
     return decoder
@@ -198,6 +210,7 @@ def load_decoder(batch_shape, model_name, ckpt_dir, filename, output_activation=
 
     if load_model_state:
         D = load_model(weight_path)
+        D._name = model_name
     else:
         # --> output channels argument should be removed in future
         D = image_decoder(batch_shape=batch_shape, name=model_name, output_activation=output_activation, size=size,
@@ -216,6 +229,7 @@ def load_decoder_no_skips(h_dim, model_name, ckpt_dir, filename, output_activati
 
     if load_model_state:
         D = load_model(weight_path)
+        D._name = model_name
     else:
         D = image_decoder_no_skips(h_dim=h_dim, name=model_name, output_activation=output_activation,
                                    output_channels=output_channels)
@@ -232,6 +246,7 @@ def load_encoder(batch_shape, h_dim, model_name, ckpt_dir, filename,
 
     if load_model_state:
         E = load_model(weight_path)
+        E._name = model_name
     else:
         E = image_encoder(batch_shape=batch_shape, h_dim=h_dim, kernel_size=kernel_size,
                           reg_lambda=reg_lambda, name=model_name)
@@ -254,6 +269,7 @@ def load_recurrent_encoder(batch_shape, h_dim, ckpt_dir, filename, size=64, conv
 
     if load_model_state:
         E = load_model(weight_path, custom_objects={'layer_norm_tanh': layer_norm_tanh})
+        E._name = name
     else:
         E = recurrent_image_encoder(batch_shape=batch_shape, h_dim=h_dim, size=size,
                                     conv_lambda=conv_lambda, recurrent_lambda=recurrent_lambda,

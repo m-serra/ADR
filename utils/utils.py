@@ -1,5 +1,6 @@
 import os
 import math
+import neptune
 from scipy.stats import norm
 import pickle
 import numpy as np
@@ -58,18 +59,20 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_11710_to_11965.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_11966_to_12221.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_12222_to_12477.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
-                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
+                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
+                        ]
 
     d.val_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
                        '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
-                       '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
+                       # '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
+                      ]
 
     if dataset == 'robonet':
         frames = tf.squeeze(d_train['images'])  # images, states, and actions are from paired
@@ -163,9 +166,57 @@ class ModelCheckpoint(tf.keras.callbacks.Callback):
         return
 
 
+class EvaluateCallback(tf.keras.callbacks.Callback):
+
+    def __init__(self, model, iterator, steps, period=1):
+        super(tf.keras.callbacks.Callback, self).__init__()
+        super().__init__()
+        self.model = model
+        self.iterator = iterator
+        self.steps = steps
+        self.period = period
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % self.period == 0:
+            self.model.evaluate(x=self.iterator, steps=self.steps)
+
+
+class SaveGifsCallback(tf.keras.callbacks.Callback):
+
+    def __init__(self, period, ckpt_dir, name, bs):
+        super(tf.keras.callbacks.Callback, self).__init__()
+        super().__init__()
+        self.period = period
+        self.ckpt_dir = ckpt_dir
+        self.name = name
+        self.bs = bs
+
+    def on_epoch_end(self, epoch, logs=None):
+
+        if epoch % self.period == 0:
+            x, imgs, mu, logvar, _, _, _, _, _ = self.model.predict(x=None, steps=1)
+
+            save_gifs(sequence=np.clip(x[:self.bs], a_min=0.0, a_max=1.0), name=self.name,
+                      save_dir=self.ckpt_dir)
+
+
+class NeptuneCallback(tf.keras.callbacks.Callback):
+
+    def __init__(self, user, project_name, log=True, ckpt=True):
+        super(tf.keras.callbacks.Callback, self).__init__()
+        super().__init__()
+        init_path = user + '/' + project_name
+        neptune.init(init_path)
+        neptune.create_experiment(name=project_name)
+
+    def on_epoch_end(self, epoch, logs=None):
+        for val, key in zip(logs.values(), logs.keys()):
+            neptune.log_metric(key, val)
+
+
 def npy_to_gif(npy, filename, fps=10):
-    clip = mpy.ImageSequenceClip(list(npy), fps=fps, )
-    clip.write_gif(filename)
+    clip = mpy.ImageSequenceClip(list(npy), fps=fps)
+    _ = clip.write_gif(filename, logger=None, verbose=False)
 
 
 def save_gifs(sequence, name, save_dir):
@@ -188,285 +239,5 @@ def print_loss(loss, loss_names, title=None):
     if title is not None:
         print('\n===== ' + title + ' =====')
     c = '  '.join('%s: %.6f' % t for t in zip(loss_names, loss))
-    print(c)
+    print(c, '\n')
 
-
-def plot_multiple(model, model_decoder, bs, grid_z, iter_, ckpt_dir, nz, aggressive, steps=8):
-
-    loc = np.zeros(nz)
-    scale = np.ones(nz)
-    # prior = torch.distributions.normal.Normal(loc=loc, scale=scale)
-    prior = norm(loc=loc, scale=scale)
-
-    infer_posterior_mean = []
-    report_loss_kl = report_mi = report_num_sample = 0
-
-    for s in range(steps):
-        pred, data, mu, logvar, skips_0, skips_1, skips_2, skips_3 = model.predict(x=None, steps=1)
-        _skips = [skips_0[:, :1], skips_1[:, :1], skips_2[:, :1], skips_3[:, :1]]
-        skips = [np.repeat(s, repeats=400, axis=1) for s in _skips]
-        print('SKIPS', skips[0].shape)
-
-        grid_z_batched = np.repeat(np.expand_dims(grid_z, axis=0), repeats=bs, axis=0)
-        grid_z_batched = np.repeat(grid_z_batched, repeats=154, axis=-1)  # --> ???????????????
-
-        print('grid z', grid_z_batched.shape)
-        # print('OUT', grid_z_batched, skips)
-        grid_pred = model_decoder.predict(x=[grid_z_batched, skips[0], skips[1], skips[2], skips[3]])
-        print('GRID PRED', grid_pred.shape)
-        # --> THIS DOESNT INFLUENCE THE PLOTS
-        report_loss_kl += np.sum(KL(mu, logvar))
-        # report_loss_kl += model.KL(data).sum().item()
-
-        report_num_sample += bs
-
-        # --> THIS DOESNT INFLUENCE THE PLOTS
-        # report_mi += calc_mi_q(model, data) * bs
-        report_mi += calc_mi(mu, logvar) * bs   # --> was getting negative MI
-
-        # [batch, 1]
-        # --> ===============================================
-        posterior_mean = calc_model_posterior_mean(prior, grid_pred, data, grid_z, bs)  # should output shape [bs, nz]
-        # print('Posterior mean:', posterior_mean)
-        print('Posterior mean:', posterior_mean.shape, np.max(posterior_mean), np.min(posterior_mean), np.mean(posterior_mean))
-
-        # print('Posterior Mean:', posterior_mean.shape)
-        posterior_mean = np.mean(posterior_mean, axis=1)  # # --> mean added by me
-
-        # infer_mean = calc_infer_mean(model, data)  # shape [bs, nz]
-        infer_mean = mu  # shape [bs, steps, nz]
-        infer_mean = np.mean(infer_mean, axis=1)  # --> mean added by me to average steps
-        # print('Infer Mean', infer_mean.shape)
-
-        infer_posterior_mean.append(np.concatenate([posterior_mean, infer_mean], axis=1))
-
-    # [*, 2]
-    infer_posterior_mean = np.concatenate(infer_posterior_mean, axis=0)
-
-    # save_path = os.path.join(ckpt_dir, 'aggr%d_iter%d_multiple.pickle' % (int(aggressive), iter_))
-    save_path = os.path.join(os.path.expanduser('~/'), 'adr/plot_data/multiple/aggr%d_iter%d_multiple.pickle'
-                             % (int(aggressive), iter_))
-
-    # print('True posterior:', infer_posterior_mean[:, 0])
-    # print('Infer posterior:', infer_posterior_mean[:, 1])
-    save_data = {'posterior': infer_posterior_mean[:, 0],
-                 'inference': infer_posterior_mean[:, 1],
-                 'kl': report_loss_kl / report_num_sample,
-                 'mi': report_mi / report_num_sample}
-    pickle.dump(save_data, open(save_path, 'wb'))
-
-
-def KL(mu, logvar):
-    kl = - 0.5 * np.sum(1.0 + logvar - np.square(mu) - np.exp(logvar), axis=(-1, -2))
-    return kl
-
-
-def calc_infer_mean(model, data):
-    _, _, mu, _ = model.predict(data, steps=1)
-    return mu
-
-
-def reparameterize(mu, logvar, z_samples=1):
-
-    std = np.exp(0.5 * logvar)
-
-    if z_samples > 1:
-        mu = np.repeat(np.expand_dims(mu, axis=1), z_samples, axis=1)
-        std = np.repeat(np.expand_dims(std, axis=1), z_samples, axis=1)
-
-    epsilon = np.random.normal(size=np.shape(logvar), loc=0.0, scale=1.0)
-
-    return mu + std * epsilon
-
-
-def calc_mi(mu, logvar):
-    """Approximate the mutual information between x and z
-    I(x, z) = E_xE_{q(z|x)}log(q(z|x)) - E_xE_{q(z|x)}log(q(z))
-    Returns: Float
-    """
-    # [x_batch, nz]
-    z_batch = 1
-
-    mu = np.mean(mu, axis=1)
-    logvar = np.mean(logvar, axis=1)
-
-    bs, nz = mu.shape
-    # print('MU SHAPE', mu.shape)  # correct shape
-
-    # E_{q(z|x)}log(q(z|x)) = -0.5*nz*log(2*\pi) - 0.5*(1+logvar).sum(-1)
-    neg_entropy = np.mean(-0.5 * nz * np.log(2 * np.pi) - 0.5 * np.sum(1 + logvar, axis=-1))
-    # print('NEG ENTROPY:', neg_entropy.shape)
-    # print('NEG ENTROPY:', neg_entropy)
-
-    # [z_batch, nz]
-    z_samples = reparameterize(mu, logvar, z_samples=z_batch)
-    # print('Z_SAMPLES', z_samples.shape)  # correct shape
-
-    # [1, x_batch, nz]
-    mu, logvar = np.expand_dims(mu, axis=0), np.expand_dims(logvar, axis=0)
-    var = np.exp(logvar)
-
-    # print('MU', mu.shape)
-    # print('LOGVAR', logvar.shape)
-
-    # (z_batch, x_batch, nz)
-    dev = z_samples - mu
-    # print('DEV', dev.shape)
-
-    # (z_batch, x_batch)
-    # log_density = -0.5 * ((dev ** 2) / var).sum(dim=-1) - 0.5 * (nz * math.log(2 * math.pi) + logvar.sum(-1))
-    log_density = -0.5 * np.sum(np.square(dev) / var, axis=-1) - 0.5 * (nz * np.log(2 * np.pi) + np.sum(logvar, axis=-1))
-    # print('LOG DENS', log_density.shape)
-
-    # log q(z): aggregate posterior
-    # [z_batch]
-    log_qz = log_sum_exp(log_density, dim=1) - math.log(bs)
-    # print('LOG QZ', log_qz)
-
-    return neg_entropy - log_qz.mean(-1)
-
-
-def calc_mii(mu, logvar):
-    x_batch, nz = mu.size()
-
-    # E_{q(z|x)}log(q(z|x)) = -0.5*nz*log(2*\pi) - 0.5*(1+logvar).sum(-1)
-    neg_entropy = (-0.5 * nz * math.log(2 * math.pi) - 0.5 * (1 + logvar).sum(-1)).mean()
-
-    # [z_batch, 1, nz]
-    z_samples = reparameterize(mu, logvar, 1)
-
-    # [1, x_batch, nz]
-    mu, logvar = mu.unsqueeze(0), logvar.unsqueeze(0)
-    var = logvar.exp()
-
-    # (z_batch, x_batch, nz)
-    dev = z_samples - mu
-
-    # (z_batch, x_batch)
-    log_density = -0.5 * ((dev ** 2) / var).sum(dim=-1) - \
-        0.5 * (nz * math.log(2 * math.pi) + logvar.sum(-1))
-
-    # log q(z): aggregate posterior
-    # [z_batch]
-    log_qz = log_sum_exp(log_density, dim=1) - math.log(x_batch)
-
-    return (neg_entropy - log_qz.mean(-1)).item()
-
-
-def calc_model_posterior_mean(prior, pred, data, grid_z, bs):
-    """compute the mean value of model posterior, i.e. E_{z ~ p(z|x)}[z]
-    Args:
-        grid_z: different z points that will be evaluated, with
-                shape (k^2, nz), where k=(zmax - zmin)/pace
-        data: [batch, *]
-    Returns: Tensor1
-        Tensor1: the mean value tensor with shape [batch, nz]
-    """
-
-    # [batch, K^2]
-    log_posterior = eval_log_model_posterior(prior, pred, data, grid_z, bs)
-    posterior = np.exp(log_posterior)
-
-    # [batch, nz]
-    return np.expand_dims(posterior, axis=2) * np.sum(np.expand_dims(grid_z, axis=0), axis=1)
-    # return torch.mul(posterior.unsqueeze(2), grid_z.unsqueeze(0)).sum(1)
-
-
-def eval_log_model_posterior(prior, pred, data, grid_z, bs):
-    """perform grid search to calculate the true posterior
-     this function computes p(z|x)
-    Args:
-        grid_z: tensor
-            different z points that will be evaluated, with
-            shape (k^2, nz), where k=(zmax - zmin)/pace
-    Returns: Tensor
-        Tensor: the log posterior distribution log p(z|x) with
-                shape [batch_size, K^2]
-    """
-    print('===== grid_z', grid_z.shape)
-    # (k^2, nz) -> (batch_size, k^2, nz)
-    grid_z = np.repeat(np.expand_dims(grid_z, axis=0), bs, axis=0)
-
-    # (batch_size, k^2)
-    log_comp = eval_complete_ll(prior, pred, data, grid_z)
-
-    # normalize to posterior
-    log_posterior = log_comp - log_sum_exp(log_comp, dim=1, keepdim=True)
-
-    return log_posterior
-
-
-def eval_complete_ll(prior, pred, data, z):
-    """compute log p(z,x)
-       data: is the true target image
-       z: a grid of latent points from which to make a reconstruction
-    """
-    # [batch, nsamples]
-    log_prior = eval_prior_dist(prior, z)
-    log_gen = eval_cond_ll(pred, data)  # for each point in z reconstruct and compare with data
-    print('log_prior:', log_prior.shape, log_prior.mean(), log_prior.max(), log_prior.min())
-    print('log_gen:', log_gen.shape, log_gen.mean(), log_gen.max(), log_gen.min())
-    return log_prior + log_gen
-
-
-def eval_cond_ll(pred, data):
-    """compute log p(x|z)
-    """
-    # return self.decoder.log_probability(x, z)
-    return np.mean(np.square(pred - data), (2, 3, 4))
-
-
-def eval_prior_dist(prior, zrange):
-    """perform grid search to calculate the true posterior
-    Args:
-        prior:
-        zrange: tensor
-            different z points that will be evaluated, with
-            shape (k^2, nz), where k=(zmax - zmin)/space
-    """
-    # (k^2)
-    # return prior.log_prob(zrange).sum(dim=-1)
-    return np.sum(prior.logpdf(zrange), axis=-1)
-
-
-def log_sum_exp(value, dim=None, keepdim=False):
-    """Numerically stable implementation of the operation
-    value.exp().sum(dim, keepdim).log()
-    """
-    if dim is not None:
-        # m, _ = torch.max(value, dim=dim, keepdim=True)
-        m = np.max(value, axis=dim, keepdims=True)
-        value0 = value - m
-        if keepdim is False:
-            m = m.squeeze(dim)
-        # return m + torch.log(torch.sum(torch.exp(value0), dim=dim, keepdim=keepdim))
-        return m + np.log(np.sum(np.exp(value0), axis=dim, keepdims=keepdim))
-    else:
-        # m = torch.max(value)
-        m = np.max(value)
-        # sum_exp = torch.sum(torch.exp(value - m))
-        sum_exp = np.sum(np.exp(value - m))
-        # return m + torch.log(sum_exp)
-        return m + np.log(sum_exp)
-
-
-def generate_grid(zmin, zmax, dz, ndim=2):
-    """generate a 1- or 2-dimensional grid
-    Returns: Tensor, int
-        Tensor: The grid tensor with shape (k^2, 2),
-            where k=(zmax - zmin)/dz
-        int: k
-    """
-    # import torch
-    # cuda = False
-    if ndim == 2:  # --> this not adapted to TF
-        # x = torch.arange(zmin, zmax, dz)
-        x = np.arange(start=zmin, stop=zmax, step=dz)
-        k = x.shape(0)
-
-        x1 = np.expand_dims(x, axis=1).repeat(1, k).view(-1)
-        x2 = x.repeat(k)
-
-        # return torch.cat((x1.unsqueeze(-1), x2.unsqueeze(-1)), dim=-1).to(device), k
-    elif ndim == 1:
-        return np.expand_dims(np.arange(start=zmin, stop=zmax, step=dz), axis=1)

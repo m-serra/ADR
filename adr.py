@@ -1,3 +1,4 @@
+import os
 import tensorflow as tf
 from tensorflow.python.keras.layers import Input
 from tensorflow.python.keras.layers import RepeatVector
@@ -5,6 +6,7 @@ from tensorflow.python.keras.layers import Lambda
 from tensorflow.python.keras.models import Model
 from tensorflow.python.keras.optimizers import Adam
 from tensorflow.python.keras.losses import mean_squared_error
+from tensorflow.python.keras.models import load_model
 from tensorflow.python.keras.losses import mean_absolute_error
 from tensorflow.python.keras.losses import binary_crossentropy
 from tensorflow.python.keras.metrics import binary_accuracy
@@ -20,6 +22,7 @@ import tensorflow.python.keras.backend as K
 from tensorflow.keras.layers import BatchNormalization, Activation
 from tensorflow.keras.layers import TimeDistributed, Conv2D, ConvLSTM2D
 from tensorflow.keras.regularizers import l2
+from keras_lr_multiplier import LRMultiplier
 
 
 def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a_layers=0, units=0, layers=0,
@@ -29,29 +32,49 @@ def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a
     bs = frames.shape[0]
     seq_len = frames.shape[1]
 
-    if random_window:
-        rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len-use_seq_len+1, dtype='int32')
-        frames = tf.slice(frames, (0, rand_index, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
-        actions = tf.slice(actions, (0, rand_index, 0), (-1, use_seq_len, -1)) if actions is not None else None
-        states = tf.slice(states, (0, rand_index, 0), (-1, use_seq_len, -1)) if states is not None else None
-    else:  # window starts at the start of each sample
-        frames = tf.slice(frames, (0, 0, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
-        actions = tf.slice(actions, (0, 0, 0), (-1, use_seq_len, -1)) if actions is not None else None
-        states = tf.slice(states, (0, 0, 0), (-1, use_seq_len, -1)) if states is not None else None
+    """uncomment"""
+    # if random_window:
+    #     rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len-use_seq_len+1, dtype='int32')
+    #     frames = tf.slice(frames, (0, rand_index, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+    #     actions = tf.slice(actions, (0, rand_index, 0), (-1, use_seq_len, -1)) if actions is not None else None
+    #     states = tf.slice(states, (0, rand_index, 0), (-1, use_seq_len, -1)) if states is not None else None
+    # else:  # window starts at the start of each sample
+    #     frames = tf.slice(frames, (0, 0, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+    #     actions = tf.slice(actions, (0, 0, 0), (-1, use_seq_len, -1)) if actions is not None else None
+    #     states = tf.slice(states, (0, 0, 0), (-1, use_seq_len, -1)) if states is not None else None
 
-    frame_inputs = Input(tensor=frames)
+    # frame_inputs = Input(tensor=frames)
+    frame_inputs = Input(batch_shape=frames.shape, name='images')
     ins = [frame_inputs]
 
     if actions is not None:
-        action_inputs = Input(tensor=actions, name='a_input')
+        # action_inputs = Input(tensor=actions, name='a_input')
+        action_inputs = Input(batch_shape=actions.shape, name='actions')
         ins.append(action_inputs)
         action_state = action_inputs  # only using actions
     if states is not None:
-        state_inputs = Input(tensor=states, name='s_input')
+        # state_inputs = Input(tensor=states, name='s_input')
+        state_inputs = Input(batch_shape=states.shape, name='states')
         ins.append(state_inputs)
         action_state = state_inputs  # only using states
+    """ uncoment"""
+    # if actions is not None and states is not None:
+    #     action_state = K.concatenate([action_inputs, state_inputs], axis=-1)  # using actions and states
+
+    """ delete starting here
+    """
+    if random_window:
+        rand_index = tf.random.uniform(shape=(), minval=0, maxval=seq_len-use_seq_len+1, dtype='int32')
+        frame_ins = tf.slice(frame_inputs, (0, rand_index, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        action_ins = tf.slice(action_inputs, (0, rand_index, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        state_ins = tf.slice(state_inputs, (0, rand_index, 0), (-1, use_seq_len, -1)) if states is not None else None
+    else:  # window starts at the start of each sample
+        frame_ins = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, use_seq_len, -1, -1, -1))
+        action_ins = tf.slice(action_inputs, (0, 0, 0), (-1, use_seq_len, -1)) if actions is not None else None
+        state_ins = tf.slice(state_inputs, (0, 0, 0), (-1, use_seq_len, -1)) if states is not None else None
     if actions is not None and states is not None:
-        action_state = K.concatenate([action_inputs, state_inputs], axis=-1)  # using actions and states
+        action_state = K.concatenate([action_ins, state_ins], axis=-1)  # using actions and states
+    """ to here"""
 
     if gaussian:
         initial_state_a = lstm_initial_state_zeros(units=a_units, n_layers=a_layers, batch_size=bs)
@@ -60,7 +83,8 @@ def get_ins(frames, actions, states, use_seq_len=12, gaussian=True, a_units=0, a
         initial_state = lstm_initial_state_zeros(units=units, n_layers=layers, batch_size=bs)
         ins.append(initial_state)
 
-    return frame_inputs, action_state, initial_state_a, initial_state, ins
+    # return frame_inputs, action_state, initial_state_a, initial_state, ins
+    return frame_ins, action_state, initial_state_a, initial_state, ins
 
 
 def get_sub_model(name, batch_shape, h_dim, ckpt_dir, filename, trainable, load_model_state, load_flag,
@@ -84,6 +108,9 @@ def get_sub_model(name, batch_shape, h_dim, ckpt_dir, filename, trainable, load_
 
 
 def freezeLayer(layer, unfreeze=False):
+    """
+    e.g.: freezeLayer(E.get_layer(name='Da'))
+    """
     if unfreeze is True:
         layer.trainable = True
     else:
@@ -111,29 +138,44 @@ def base_layer(x, filters, kernel_size=5, strides=2, activation='relu', kernel_i
     return layer_output
 
 
-def action_inference_model(input_sequence):
+def action_inference_model(input_sequence, return_hidden=False):
 
-    ins = Input(tensor=input_sequence)
+    if isinstance(input_sequence, list):
+        ins = Input(batch_shape=input_sequence)
+    else:
+        ins = Input(tensor=input_sequence)
 
-    encoder = base_layer(ins, filters=128, strides=2)
+    h1 = base_layer(ins, filters=128, strides=2)  # 64x64 -> 32x32
+    h2 = base_layer(h1, filters=64, strides=2)    # 32x32 -> 16x16
+    h3 = base_layer(h2, filters=64, strides=2)    # 16x16 -> 8x8
+    h4 = base_layer(h3, filters=32, strides=1)    # 8x8
+    h5 = base_layer(h4, filters=16, strides=2)    # 8x8   -> 4x4
+    h6 = base_layer(h5, filters=8, strides=1)     # 4x4
+    h7 = base_layer(h6, filters=4, strides=2)     # 4x4   -> 2x2
 
-    encoder = base_layer(encoder, filters=64, strides=2)
-    encoder = base_layer(encoder, filters=64, strides=2)
-    encoder = base_layer(encoder, filters=32, strides=1)
-    encoder = base_layer(encoder, filters=16, strides=2)
-    encoder = base_layer(encoder, filters=8, strides=1)
-    encoder = base_layer(encoder, filters=4, strides=2)
+    h8 = TimeDistributed(Conv2D(filters=3, kernel_size=5, strides=2, padding='same', activation='linear',
+                                kernel_initializer='he_uniform'))(h7)
 
-    actions = TimeDistributed(Conv2D(filters=3, kernel_size=5, strides=2, padding='same', activation='linear',
-                                     kernel_initializer='he_uniform'))(encoder)
-    actions = Lambda(lambda x: tf.squeeze(x))(actions)
+    actions = Lambda(lambda x: tf.squeeze(tf.squeeze(x, axis=2), axis=2))(h8)
 
-    model = Model(inputs=ins, outputs=actions)
+    if return_hidden:
+        model = Model(inputs=ins, outputs=[actions, [h1, h2, h3, h4, h5, h6, h7]])
+    else:
+        model = Model(inputs=ins, outputs=actions)
 
     return model
 
 
-def adr_ao(frames, actions, states, context_frames, Ec, A, D, C, learning_rate=0.01, gaussian=False, kl_weight=None,
+def load_action_inference_model(batch_shape, filename='C.h5', ckpt_dir=None, trainable=False, return_hidden=True):
+    weight_path = os.path.join(ckpt_dir, filename)
+    model = action_inference_model(input_sequence=batch_shape, return_hidden=return_hidden)
+    model.load_weights(weight_path)
+    if trainable is False:
+        model.trainable = False
+    return model
+
+
+def adr_ao(frames, actions, states, context_frames, Ec, A, D, learning_rate=0.01, gaussian=False, kl_weight=None,
            L=None, use_seq_len=12, lstm_units=None, lstm_layers=None, training=True, reconstruct_random_frame=False,
            random_window=True):
 
@@ -184,50 +226,29 @@ def adr_ao(frames, actions, states, context_frames, Ec, A, D, C, learning_rate=0
 
     x_recovered = D([hc_ha, skips])
 
-    inf_actions = C(x_recovered)
+    _, x0 = tf.split(xc_0, [-1, 1], axis=1)
 
     rec_loss = mean_squared_error(x_to_recover, x_recovered)
     sim_loss = mean_squared_error(hc_0, hc_1)
 
-    # == Frozen discriminator model
-    E = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
-    E.add_metric(rec_loss, name='rec_loss', aggregation='mean')
-    E.add_metric(sim_loss, name='sim_loss', aggregation='mean')
-
     if gaussian:
-        kl_loss = kl_unit_normal(mu, logvar)
-        E.add_metric(kl_loss, name='kl_loss', aggregation='mean')
-        E.add_loss(K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
+        ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar])
     else:
-        E.add_loss(K.mean(rec_loss) + K.mean(sim_loss))
-
-    freezeLayer(E.get_layer(name='Da'))
-    E.compile(optimizer=Adam(lr=learning_rate))
-
-    # == Full model
-    ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover, mu, logvar, hc_ha, skips])
+        ED = Model(inputs=ins, outputs=[x_recovered, x_to_recover])
     ED.add_metric(rec_loss, name='rec_loss', aggregation='mean')
     ED.add_metric(sim_loss, name='sim_loss', aggregation='mean')
 
     if gaussian:
         kl_loss = kl_unit_normal(mu, logvar)
         ED.add_metric(kl_loss, name='kl_loss', aggregation='mean')
-        ED.add_loss(K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
+        ED.add_loss(1.0*K.mean(rec_loss) + K.mean(sim_loss) + kl_weight * K.mean(kl_loss))
     else:
-        ED.add_loss(K.mean(rec_loss) + K.mean(sim_loss))
+        ED.add_loss(1.0*K.mean(rec_loss) + K.mean(sim_loss))
 
-    freezeLayer(ED.get_layer(name='Da'), unfreeze=True)
-
+    # freezeLayer(ED.get_layer(name='Da'), unfreeze=True)
     ED.compile(optimizer=Adam(lr=learning_rate))
 
-    h_placeholder = Input(batch_shape=hc_ha.shape)
-    skips_placeholder = [Input(batch_shape=s.shape) for s in skips]
-
-    x_recovered = D([h_placeholder, skips_placeholder])
-    d = Model(inputs=[h_placeholder, skips_placeholder], outputs=x_recovered)
-    d.compile(optimizer=Adam(lr=learning_rate), loss=mean_squared_error)
-
-    return ED, E, d
+    return ED
 
 
 def adr(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, gaussian_a=False, use_seq_len=12,
@@ -273,11 +294,15 @@ def adr(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, La=None, gau
 
     x_rec_a = Da([hc_ha, skips])
 
+    # --> Changed the input to Eo from the error image to the full frame and the action only prediction
     x_rec_a_pos = K.relu(x_to_recover - x_rec_a)
     x_rec_a_neg = K.relu(x_rec_a - x_to_recover)
-    xo_rec_a = K.concatenate([x_rec_a_pos, x_rec_a_neg], axis=-1)
+
+    # xo_rec_a = K.concatenate([x_rec_a_pos, x_rec_a_neg], axis=-1)
+    xo_rec_a = K.concatenate([x_to_recover, x_rec_a], axis=-1)
 
     ho, _ = Eo(xo_rec_a)
+    # ho = Eo(xo_rec_a)
 
     h = K.concatenate([hc_repeat, ha, ho], axis=-1)  # multiple reconstruction
 
@@ -325,6 +350,7 @@ def adr_vp_teacher_forcing(frames, actions, states, context_frames, Ec, Eo, A, D
                                                                               gaussian=gaussian_a, a_units=lstm_a_units,
                                                                               a_layers=lstm_a_layers, units=lstm_units,
                                                                               layers=lstm_layers, lstm=True)
+
     # context frames at the beginning
     xc_0 = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, context_frames, -1, -1, -1))
     n_frames = use_seq_len
@@ -347,12 +373,14 @@ def adr_vp_teacher_forcing(frames, actions, states, context_frames, Ec, Eo, A, D
 
     x_err_pos = K.relu(frame_inputs - x_rec_a)
     x_err_neg = K.relu(x_rec_a - frame_inputs)
-    xo_rec_a = K.concatenate([x_err_pos, x_err_neg], axis=-1)  # ground truth error components
 
-    ho, _ = Eo(xo_rec_a)
+    xo_rec_a = K.concatenate([frame_inputs, x_rec_a], axis=-1)  # -->  Here the action only image is not needed
+    # xo_rec_a = K.concatenate([x_err_pos, x_err_neg], axis=-1)  # ground truth error components
 
     remove_first_step = Lambda(lambda _x: tf.split(_x, [1, -1], axis=1))  # new operations
     remove_last_step = Lambda(lambda _x: tf.split(_x, [-1, 1], axis=1))
+
+    ho, _ = Eo(xo_rec_a)
 
     hc = RepeatVector(n_frames - 1)(K.squeeze(hc_0, axis=1))
     skips = repeat_skips(skips_0, ntimes=n_frames - 1)
@@ -364,19 +392,20 @@ def adr_vp_teacher_forcing(frames, actions, states, context_frames, Ec, Eo, A, D
     h = tf.concat([hc, ha_t, ha_tp1, ho_t], axis=-1)            # [0 to 18]
 
     ho_pred, _ = L([h, initial_state])                          # [1 to 19]
-
     _, ho_tp1 = remove_first_step(ho)                           # [1 to 19] Target for LSTM outputs
+
     x_rec_a_t, _ = remove_last_step(x_rec_a)                    # [0 to 18] Used to obtain x_curr
     _, x_rec_a_tp1 = remove_first_step(x_rec_a)                 # [1 to 19] Used to obtain x_pred
-    x_target_curr, _ = remove_last_step(frame_inputs)           #           Target for x_curr
-    _, x_target_pred = remove_first_step(frame_inputs)          #           Target for x_pred
-    _, x_err_pos_target = remove_first_step(x_err_pos)          #           Target for Do reconstruction
-    _, x_err_neg_target = remove_first_step(x_err_neg)          #           Target for Do reconstruction
+
+    _, x_target_pred = remove_first_step(frame_inputs)          #           Target for Do pred reconstruction
+    _, x_err_pos_target = remove_first_step(x_err_pos)          #           Target for Do pred reconstruction
+    _, x_err_neg_target = remove_first_step(x_err_neg)          #           Target for Do pred reconstruction
 
     # reconstruct current step
     h = tf.concat([hc, ha_t, ho_t], axis=-1)
     x_err_curr = Do([h, skips])
 
+    x_target_curr, _ = remove_last_step(frame_inputs)           # [0 to 18] Target for x_curr
     x_err_curr_pos = x_err_curr[:, :, :, :, :3]
     x_err_curr_neg = x_err_curr[:, :, :, :, 3:]
     x_curr = x_rec_a_t + x_err_curr_pos - x_err_curr_neg
@@ -389,7 +418,7 @@ def adr_vp_teacher_forcing(frames, actions, states, context_frames, Ec, Eo, A, D
     x_err_pred_neg = x_err_pred[:, :, :, :, 3:]
     x_pred = x_rec_a_tp1 + x_err_pred_pos - x_err_pred_neg
 
-    model = Model(inputs=ins, outputs=[ho_pred, x_curr, x_pred, x_err_pred_pos, x_err_pred_neg, x_rec_a, x_target_pred])
+    model = Model(inputs=ins, outputs=[ho_pred, x_curr, x_pred, x_rec_a, x_target_pred], name='vp_model')
 
     ho_mse = mean_squared_error(y_pred=ho_pred, y_true=ho_tp1)
     model.add_metric(K.mean(ho_mse), name='ho_mse', aggregation='mean')
@@ -401,18 +430,27 @@ def adr_vp_teacher_forcing(frames, actions, states, context_frames, Ec, Eo, A, D
     model.add_metric(rec_pred, name='rec_pred', aggregation='mean')
 
     rec_pos = mean_squared_error(y_pred=x_err_pred_pos, y_true=x_err_pos_target)
-    model.add_metric(rec_pos, name='rec_pos', aggregation='mean')
-
     rec_neg = mean_squared_error(y_pred=x_err_pred_neg, y_true=x_err_neg_target)
-    model.add_metric(rec_neg, name='rec_neg', aggregation='mean')
 
     rec_A = mean_squared_error(y_pred=x_rec_a, y_true=frame_inputs)
     model.add_metric(rec_A, name='rec_A', aggregation='mean')
 
-    # model.add_loss(K.mean(ho_mse) + K.mean(rec_curr) + K.mean(rec_pred) + K.mean(rec_pos) + K.mean(rec_neg))
-    model.add_loss(K.mean(rec_curr) + K.mean(rec_pred))
+    # weights = {}
+    # for layer in model.layers:
+    #     weights[layer.name] = 1.0
+    # weights['Eo'] = 1.0  # 0.01
+    # weights['Do'] = 1.0  # 0.01
 
-    model.compile(optimizer=Adam(lr=learning_rate))
+    # why did I have rec_curr??
+    # model.add_loss(0.5*K.mean(ho_mse) + 0.125*K.mean(rec_curr) + 0.125*K.mean(rec_pred)
+    #                                   + 0.125*K.mean(rec_pos) + 0.125*K.mean(rec_neg))
+
+    # model.add_loss(0.5*K.mean(ho_mse) + 0.5/3*(K.mean(rec_pred)) + K.mean(rec_pos) + K.mean(rec_neg))
+    model.add_loss(K.mean(rec_pred) + K.mean(rec_pos) + K.mean(rec_neg))
+
+    # base_opt = Adam(lr=learning_rate)
+    model.compile(# optimizer=LRMultiplier(base_opt, weights))
+                  Adam(lr=learning_rate, clipvalue=10.0))
 
     return model
 
@@ -490,7 +528,106 @@ def adr_vp_feedback(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, 
     x_pred = xa + x_err_pred_pos - x_err_pred_neg
     _, x_target = tf.split(frame_inputs, [1, -1], axis=1)
 
-    outs = [x_pred, x_pred, x_pred, x_rec_a, x_rec_a, x_rec_a, x_target]  # repetitions to match teacher forcing version
+    outs = [x_pred, x_pred, x_pred, x_rec_a, x_target]  # repetitions to match teacher forcing version
+
+    model = Model(inputs=ins, outputs=outs, name='vp_model')
+
+    rec_pred = mean_squared_error(y_pred=x_pred, y_true=x_target)
+    model.add_metric(rec_pred, name='rec_pred', aggregation='mean')
+
+    rec_A = mean_squared_error(y_pred=x_rec_a, y_true=frame_inputs)
+    model.add_metric(rec_A, name='rec_A', aggregation='mean')
+
+    model.add_loss(K.mean(rec_pred))
+
+    model.compile(optimizer=Adam(lr=learning_rate))
+
+    return model
+
+
+def adr_vp_feedback_frames(frames, actions, states, context_frames, Ec, Eo, A, Do, Da, L, La=None, gaussian_a=False,
+                           use_seq_len=12, lstm_a_units=256, lstm_a_layers=1, lstm_units=256, lstm_layers=2,
+                           learning_rate=0.0, random_window=False):
+
+    bs, seq_len, w, h, c = [int(s) for s in frames.shape]
+    assert seq_len >= use_seq_len
+
+    frame_inputs, action_state, initial_state_a, initial_state, ins = get_ins(frames, actions, states,
+                                                                              use_seq_len=use_seq_len,
+                                                                              random_window=random_window,
+                                                                              gaussian=gaussian_a, a_units=lstm_a_units,
+                                                                              a_layers=lstm_a_layers, units=lstm_units,
+                                                                              layers=lstm_layers, lstm=True)
+    # context frames at the beginning
+    xc_0 = tf.slice(frame_inputs, (0, 0, 0, 0, 0), (-1, context_frames, -1, -1, -1))
+    n_frames = use_seq_len
+
+    # ===== Build the model
+    hc_0, skips_0 = Ec(xc_0)
+    hc_0 = tf.slice(hc_0, (0, context_frames - 1, 0), (-1, 1, -1))
+    skips_0 = slice_skips(skips_0, start=context_frames - 1, length=1)
+    skips = repeat_skips(skips_0, n_frames)
+
+    ha = A(action_state)
+    hc_repeat = RepeatVector(n_frames)(tf.squeeze(hc_0, axis=1))
+    hc_ha = K.concatenate([hc_repeat, ha], axis=-1)
+
+    if gaussian_a:
+        _, za, _, _ = La([hc_ha, initial_state_a])  # za taken as the mean
+        hc_ha = K.concatenate([hc_repeat, ha, za], axis=-1)
+
+    x_rec_a = Da([hc_ha, skips])  # agent only prediction
+
+    # x_err_pos = K.relu(frame_inputs - x_rec_a)
+    # x_err_neg = K.relu(x_rec_a - frame_inputs)
+    # xo_rec_a = K.concatenate([x_err_pos, x_err_neg], axis=-1)  # ground truth error components
+
+    # ho, _ = Eo(xo_rec_a)
+
+    x_pred = []
+    prev_state = initial_state
+    hc_t = hc_0
+
+    ha_t, _ = tf.split(ha, [-1, 1], axis=1)  # remove last step
+    _, ha_tp1 = tf.split(ha, [1, -1], axis=1)  # remove first step
+    _, xa_tp1 = tf.split(x_rec_a, [1, -1], axis=1)
+    x = frame_inputs
+    xa = x_rec_a
+
+    for i in range(n_frames - 1):
+
+        xa_t, xa = tf.split(xa, [1, -1], axis=1)
+        xa_pred, xa_tp1 = tf.split(xa_tp1, [1, -1], axis=1)
+        x_t, x = tf.split(x, [1, -1], axis=1)
+
+        if i >= context_frames:
+            x_t = x_pred_t
+
+        x_xa_t = K.concatenate([x_t, xa_t], axis=-1)
+        ho_t, _ = Eo(x_xa_t)
+
+        _ha_t, ha_t = tf.split(ha_t, [1, -1], axis=1)
+        _ha_tp1, ha_tp1 = tf.split(ha_tp1, [1, -1], axis=1)
+
+        h = tf.concat([hc_t, _ha_t, _ha_tp1, ho_t], axis=-1)
+
+        ho_pred, state = L([h, prev_state])
+
+        h_pred_t = tf.concat([hc_t, _ha_tp1, ho_pred], axis=-1)
+
+        x_err_pred_t = Do([h_pred_t, skips_0])
+        x_err_pred_pos = x_err_pred_t[:, :, :, :, :3]
+        x_err_pred_neg = x_err_pred_t[:, :, :, :, 3:]
+        x_pred_t = xa_pred + x_err_pred_pos - x_err_pred_neg
+        x_pred.append(x_pred_t)
+
+        prev_state = state
+
+    # Obtain predicted frames
+    x_pred = tf.squeeze(tf.stack(x_pred, axis=1), axis=2)
+    _, x_target = tf.split(frame_inputs, [1, -1], axis=1)
+
+    outs = [x_pred, x_pred, x_pred, x_rec_a, x_target]  # repetitions to match teacher forcing version
 
     model = Model(inputs=ins, outputs=outs, name='vp_model')
 

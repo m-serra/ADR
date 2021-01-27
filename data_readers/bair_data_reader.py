@@ -206,7 +206,7 @@ class BairDataReader(BaseDataReader):
         image_seq = []
         for i in range(self.sequence_length_to_use):
             fname = '%s/%d.png' % (sequence_dir, i)
-            im = imread(fname).reshape(1, self.IMG_HEIGHT, self.IMG_WIDTH, self.COLOR_CHAN)
+            im = imread(fname, mode='RGB').reshape(1, self.IMG_HEIGHT, self.IMG_WIDTH, self.COLOR_CHAN)
             image_seq.append(im / 255.)
         image_seq = np.concatenate(image_seq, axis=0)
 
