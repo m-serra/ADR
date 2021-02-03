@@ -1,9 +1,12 @@
 # ADR
 Action-conditioned disentangled representations for video prediction
 
+
+(Code is being refactored from previous version)
+
 --------------------
 
-[[Paper]](https://arxiv.org/abs/1910.02564) | [[Thesis]](https://www.youtube.com/watch?v=MVCRLVg8vc8&t=6s)
+[[Paper]](https://drive.google.com/file/d/1idy9Bm53dW1zCUJ7epuugUwrPzd-oulV/view?usp=sharing) | [[Thesis]](https://drive.google.com/file/d/1QpDfYpAEwYPErHz6YYG3uNJsH-Nj9pVa/view?usp=sharing)
 
 ### Overview
 In this work we take on the challenge of overcoming one of the main hurdles in the field of video prediction which is the prediction of object movement. 
@@ -17,4 +20,4 @@ The error between ground truth frames and the frames generated with ADR-AO produ
 
 <img src="https://web.ist.utl.pt/ist181063/vp_examples/error_images/example_a/gt.gif" width="150" height="150"/> <img src="https://web.ist.utl.pt/ist181063/vp_examples/error_images/example_a/x_a.gif" width="150" height="150"/> <img src="https://web.ist.utl.pt/ist181063/vp_examples/error_images/example_a/err.gif" width="150" height="150"/>
 
-(Code is being refactored from previous version)
+The error images can be used to learn a representation of the objects. When predicting into the future with **ADR-VP**, an LSTM receives a content, action and object representation at time-step *t* and outputs the object representation for *t+1*. Predictions can then be fed back into the network, allowing the model to hallucinate the future.
