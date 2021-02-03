@@ -155,16 +155,6 @@ def image_decoder(batch_shape, name=None, time_distr=True, output_activation='si
     _in = concat([h4, skip_0])
     x = TimeDistributed(out_conv)(_in) if time_distr is True else out_conv(_in)
 
-    # _in = concat([h4, skip_0])
-    # h5 = base_conv_transpose_layer(_in, filters=size, strides=2, kernel_size=kernel_size, time_distr=time_distr,
-    #                                reg_lambda=reg_lambda, kernel_initializer=initializer)
-
-    # out_conv = Conv2DTranspose(filters=output_channels, kernel_size=kernel_size, strides=1, padding='same',
-    #                            activation=output_activation, kernel_initializer=output_initializer,
-    #                            activity_regularizer=output_regularizer)
-
-    # x = TimeDistributed(out_conv)(h5) if time_distr is True else out_conv(h5)
-
     decoder = Model(inputs=[z, [skip_0, skip_1, skip_2, skip_3]], outputs=x, name=name)
     return decoder
 
@@ -296,7 +286,6 @@ def slice_skips(skips, start=0, length=1):
     _skips = []
     for s in skips:
         _s = Lambda(lambda _x: tf.slice(_x, (0, start, 0, 0, 0), (-1, length, -1, -1, -1)))(s)
-        # _s = tf.slice(s, (0, start, 0, 0, 0), (-1, length, -1, -1, -1))
         _skips.append(_s)
     return _skips
 

@@ -22,7 +22,7 @@ def main():
     seq_len = 30
     mode = 'val'  # --> !!!
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
-    ckpt_dir = os.path.join('/home/mandre/adr/trained_models/bair/random_window')
+    ckpt_dir = os.path.join('/home/mandre/adr/trained_models/bair')
 
     frames, actions, states, steps, iterator = get_data(dataset='bair', mode=mode, batch_size=bs, shuffle=False,
                                                         dataset_dir=dataset_dir, sequence_length_train=seq_len,
@@ -43,22 +43,22 @@ def main():
                            ckpt_dir=ckpt_dir,
                            context_frames=2,
                            gaussian=True,
-                           hc_dim=128,
-                           ha_dim=16,
-                           z_dim=10,
+                           hc_dim=64,
+                           ha_dim=8,
+                           z_dim=6,
                            units=256,
                            lstm_units=256,
                            lstm_layers=1,
                            steps=steps,
                            val_steps=val_steps,
-                           ec_filename='Ec_a_t00243_v0023_tf10tv2.h5',
-                           a_filename='A_a_t00243_v0023_tf10tv2.h5',
-                           d_filename='D_a_t00243_v0023_tf10tv2.h5',
-                           l_filename='L_a_t00243_v0023_tf10tv2.h5',
+                           ec_filename='Ec_a_test.h5',
+                           a_filename='A_a_test.h5',
+                           d_filename='D_a_test.h5',
+                           l_filename='L_a_test.h5',
                            set_states=False,
                            config=config,
                            evaluate=True,
-                           predict=False,
+                           predict=True,
                            random_window=True,
                            eval_kld=False)
 

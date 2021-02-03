@@ -9,11 +9,8 @@ from termcolor import colored
 import moviepy.editor as mpy
 from data_readers.bair_data_reader import BairDataReader
 from data_readers.google_push_data_reader import GooglePushDataReader
-from models.encoder_decoder import repeat_skips, slice_skips
 from robonet.datasets import load_metadata
 from robonet.datasets.robonet_dataset import RoboNetDataset
-from adr import kl_unit_normal
-import tensorflow.python.keras.backend as K
 
 
 def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12, sequence_length_test=12,
@@ -59,20 +56,18 @@ def get_data(dataset, mode, dataset_dir, batch_size=32, sequence_length_train=12
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_11710_to_11965.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_11966_to_12221.tfrecords',
                          '/media/Data/datasets/bair/softmotion30_44k/train/traj_12222_to_12477.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
-                         # '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
-                        ]
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12478_to_12733.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12734_to_12989.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_1280_to_1535.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_12990_to_13245.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13341_to_13596.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13597_to_13852.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_13853_to_14108.tfrecords',
+                         '/media/Data/datasets/bair/softmotion30_44k/train/traj_14109_to_14364.tfrecords']
 
     d.val_filenames = ['/media/Data/datasets/bair/softmotion30_44k/train/traj_5983_to_6238.tfrecords',
                        '/media/Data/datasets/bair/softmotion30_44k/train/traj_6239_to_6494.tfrecords',
-                       # '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
-                      ]
+                       '/media/Data/datasets/bair/softmotion30_44k/train/traj_6495_to_6750.tfrecords']
 
     if dataset == 'robonet':
         frames = tf.squeeze(d_train['images'])  # images, states, and actions are from paired
@@ -137,7 +132,6 @@ class ModelCheckpoint(tf.keras.callbacks.Callback):
         loss = criteria_map.get(self.criteria)
 
         if loss < self.best_loss:
-        #  if loss < self.best_loss or train_loss < self.best_train_loss:  # --> !!!!
             for m, f in zip(self.models, self.filenames):
                 if self.keep_all:
                     f = f.replace('.h5', '') + '_t' + str(train_loss).replace('0.', '') + \
@@ -183,18 +177,21 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
 
 class SaveGifsCallback(tf.keras.callbacks.Callback):
 
-    def __init__(self, period, ckpt_dir, name, bs):
+    def __init__(self, period, iterator, ckpt_dir, name, bs):
         super(tf.keras.callbacks.Callback, self).__init__()
         super().__init__()
         self.period = period
         self.ckpt_dir = ckpt_dir
         self.name = name
         self.bs = bs
+        self.iterator = iterator
 
     def on_epoch_end(self, epoch, logs=None):
 
         if epoch % self.period == 0:
-            x, imgs, mu, logvar, _, _, _, _, _ = self.model.predict(x=None, steps=1)
+            # x, imgs, mu, logvar, _, _, _, _, _ = self.model.predict(x=self.iterator, steps=1)
+            x, imgs, mu, logvar = self.model.predict(x=self.iterator, steps=1)
+            # x, imgs = self.model.predict(x=self.iterator, steps=1)
 
             save_gifs(sequence=np.clip(x[:self.bs], a_min=0.0, a_max=1.0), name=self.name,
                       save_dir=self.ckpt_dir)

@@ -1,18 +1,18 @@
 from __future__ import absolute_import
 import os
-import time
-import numpy as np
+import neptune
 import tensorflow as tf
-from adr import adr_ao, get_sub_model, load_action_inference_model
+from adr import adr_ao
+from adr import get_sub_model
 from utils.clr import CyclicLR
-from utils.utils import get_data, ModelCheckpoint, print_loss, save_gifs, SaveGifsCallback, NeptuneCallback, EvaluateCallback
-from tensorflow.python.keras.optimizers import Adam
-import matplotlib.pyplot as plt
-from utils.utils import generate_grid, plot_multiple, calc_mi
+from utils.utils import get_data
+from utils.utils import ModelCheckpoint
+from utils.utils import SaveGifsCallback
+from utils.utils import NeptuneCallback
+from utils.utils import EvaluateCallback
 from tensorflow.python.keras.regularizers import l2
 import tensorflow.python.keras.backend as K
 
-import neptune
 tf.logging.set_verbosity(tf.logging.ERROR)
 
 best_loss = 9999
@@ -29,18 +29,18 @@ def main():
     seq_len = 30
     shuffle = True
     dataset_dir = '/media/Data/datasets/bair/softmotion30_44k/'
+    # dataset_dir = '/media/data/mserra/bair/softmotion30_44k/'
 
-    # when doing aggressive training initialize dataset at each epoch to reshuffle data
     frames, actions, states, steps, train_iterator = get_data(dataset='bair', mode='train', batch_size=bs,
                                                               shuffle=shuffle, dataset_dir=dataset_dir,
                                                               sequence_length_train=seq_len,
-                                                              sequence_length_test=seq_len, initializable=False)
+                                                              sequence_length_test=use_seq_len)
 
     _, _, _, val_steps, val_iterator = get_data(dataset='bair', mode='val', batch_size=bs, shuffle=False,
                                                 dataset_dir=dataset_dir, sequence_length_train=seq_len,
-                                                sequence_length_test=seq_len)
+                                                sequence_length_test=use_seq_len)
 
-    gpu_options = tf.GPUOptions(visible_device_list='0')
+    gpu_options = tf.GPUOptions(visible_device_list='1')
     config = tf.ConfigProto(gpu_options=gpu_options)
 
     hist = train_adr_ao(frames,
@@ -50,9 +50,9 @@ def main():
                         use_seq_len=use_seq_len,
                         continue_training=False,
                         config=config,
-                        clr_flag=False,
-                        base_lr=1e-5,  # 1e-5,  # According to plot: 4e-6  # If gaussian True: 1e-5
-                        max_lr=8e-5,  # 8e-5,   # According to plot: 1e-4  # If gaussian True: 8e-5
+                        clr_flag=True,  # --> !!!
+                        base_lr=4e-6,  # 1e-5,  # According to plot: 4e-6  # If gaussian True: 1e-5
+                        max_lr=2e-4,  # 8e-5,   # According to plot: 1e-4  # If gaussian True: 8e-5
                         half_cycle=4,
                         hc_dim=128,
                         ha_dim=16,
@@ -62,14 +62,14 @@ def main():
                         gaussian=True,
                         z_dim=10,
                         # kl_weight=1e-6,  # 1e-6,  # 1e-5,
-                        kl_weight=5e-7,  # 1e-6,  # 1e-5,    # --> !!!!!!!!!!!
+                        kl_weight=5e-7,  # 1e-6,  # 1e-5,
                         lstm_units=256,
                         lstm_layers=1,
                         epochs=500000,
                         steps=steps,
-                        learning_rate=4e-5,
-                        ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/trained_models/bair/'),
                         val_steps=val_steps,
+                        learning_rate=4e-5,
+                        ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/trained_models/bair/18t3v'),
                         ckpt_criteria='val_rec',
                         ec_filename='Ec_a_test.h5',
                         d_filename='D_a_test.h5',
@@ -84,13 +84,14 @@ def main():
                         train_iterator=train_iterator,
                         val_iterator=val_iterator,
                         random_window=True,
+                        save_model=True,
                         reconstruct_random_frame=False,
-                        keep_all=False)
+                        keep_all=True)  # --> !!!!!
 
     return hist
 
 
-def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_dim=16, epochs=1, clr_flag=False,
+def train_adr_ao(frames, actions, states=None, context_frames=2, hc_dim=128, ha_dim=16, epochs=1, clr_flag=False,
                  base_lr=None, max_lr=None, continue_training=False, reg_lambda=0.0, recurrent_lambda=0.0,
                  output_regularizer=None, steps=1000, learning_rate=0.001, a_units=256, gaussian=False, z_dim=10,
                  kl_weight=0.1, lstm_units=256, lstm_layers=2, config=None, half_cycle=4, val_steps=None, ckpt_dir='.',
@@ -108,7 +109,6 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
     z_dim = 0 if gaussian is False else z_dim
     a_dim = actions.shape[-1] if actions is not None else 0
     s_dim = states.shape[-1] if states is not None else 0
-    L = None
     clbks = []
 
     sess = tf.Session(config=config)
@@ -127,12 +127,12 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
                       filename=d_load_name, trainable=True, load_model_state=continue_training,
                       load_flag=continue_training, reg_lambda=reg_lambda, output_regularizer=output_regularizer)
 
-    A = get_sub_model(name=a_name, batch_shape=[bs, seq_len, a_dim + s_dim], h_dim=ha_dim, ckpt_dir=ckpt_dir,
+    A = get_sub_model(name=a_name, batch_shape=[bs, use_seq_len, a_dim + s_dim], h_dim=ha_dim, ckpt_dir=ckpt_dir,
                       filename=a_load_name, trainable=True, load_model_state=continue_training,
                       load_flag=continue_training, units=a_units, dense_lambda=reg_lambda,
                       recurrent_lambda=recurrent_lambda)
 
-    L = get_sub_model(name='La', batch_shape=[bs, seq_len, hc_dim + ha_dim], h_dim=z_dim, ckpt_dir=ckpt_dir,
+    L = get_sub_model(name='La', batch_shape=[bs, use_seq_len, hc_dim + ha_dim], h_dim=z_dim, ckpt_dir=ckpt_dir,
                       filename=l_load_name, trainable=True, load_model_state=continue_training,
                       load_flag=continue_training, units=lstm_units, n_layers=lstm_layers, lstm_type='gaussian',
                       reparameterize=True, reg_lambda=recurrent_lambda)
@@ -166,15 +166,15 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
     # print(len(E._collected_trainable_weights))
     # print(len(C._collected_trainable_weights))
 
-    save_gifs_flag = False
+    save_gifs_flag = True
     if save_model:
         clbks.append(ModelCheckpoint(models=ckpt_models, criteria=ckpt_criteria, ckpt_dir=ckpt_dir, filenames=filenames,
                                      neptune_ckpt=neptune_ckpt, keep_all=keep_all))
     if neptune_log or neptune_ckpt:
         clbks.append(NeptuneCallback(user='m-serra', project_name='video-prediction', log=neptune_log, ckpt=neptune_ckpt))
     if save_gifs_flag:
-        clbks.append(SaveGifsCallback(period=25, ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/gifs'),
-                                      name='pred', bs=bs))
+        clbks.append(SaveGifsCallback(period=25, iterator=val_iterator,
+                                      ckpt_dir=os.path.join(os.path.expanduser('~/'), 'adr/gifs'), name='pred2', bs=bs))
     if clr_flag:
         clbks.append(CyclicLR(ED, base_lr, max_lr, step_size=half_cycle * steps))
 
@@ -202,18 +202,6 @@ def train_adr_ao(frames, actions, states=None, context_frames=3, hc_dim=128, ha_
            verbose=2)
 
     return ED.history
-
-
-def _calc_mi(model, iterator, steps, bs):
-    mi = 0
-    num_examples = 0
-
-    for _ in range(steps):
-        x, imgs, mu, logvar, _, _, _, _, _ = model.predict(x=iterator, steps=1)
-        num_examples += bs
-        mutual_info = calc_mi(mu, logvar)
-        mi += mutual_info * bs
-    return mi / num_examples
 
 
 if __name__ == '__main__':
